@@ -1,0 +1,390 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserType {
+  CREATOR
+  CONTRIBUTOR
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+enum ScheduleType {
+  FIXED
+  VARIABLE
+}
+
+enum TaskStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  EXPIRED
+}
+
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  COMPLETED
+  EXPIRED
+}
+
+enum ProofType {
+  SCREENSHOT
+  LINK
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFYING
+  VERIFIED
+  REJECTED
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum TransactionCategory {
+  TASK_PAYOUT
+  REFERRAL_BONUS
+  WITHDRAWAL
+  REFUND
+  PLATFORM_FEE
+  DEPOSIT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum NotificationType {
+  TASK_CREATED
+  TASK_APPLIED
+  TASK_APPROVED
+  TASK_DECLINED
+  SUBMISSION_VERIFIED
+  SUBMISSION_REJECTED
+  PAYOUT_RECEIVED
+  WITHDRAWAL_PROCESSED
+  WITHDRAWAL_FAILED
+  REFERRAL_REWARD
+  PROFILE_INCOMPLETE
+  NIN_VERIFICATION_REQUIRED
+  SYSTEM_ALERT
+}
+
+enum ReferralStatus {
+  PENDING
+  COMPLETED
+}
+
+enum AdminActionType {
+  SUSPEND_USER
+  UNSUSPEND_USER
+  OVERRIDE_VERIFICATION
+  RESOLVE_DISPUTE
+  DELETE_USER
+}
+
+// ============================================
+// MODELS
+// ============================================
+
+model User {
+  id                        String     @id @default(uuid())
+  email                     String     @unique @db.VarChar(255)
+  passwordHash              String     @map("password_hash") @db.VarChar(255)
+  userType                  UserType   @map("user_type")
+  emailVerified             Boolean    @default(false) @map("email_verified")
+  verificationCode          String?    @map("verification_code") @db.VarChar(10)
+  verificationCodeExpiresAt DateTime?  @map("verification_code_expires_at") @db.Timestamptz(6)
+  profileComplete           Boolean    @default(false) @map("profile_complete")
+  reputationScore           Int        @default(75) @map("reputation_score") // 0-100, starts at 75
+  ninVerified               Boolean    @default(false) @map("nin_verified")
+  ninNumber                 String?    @map("nin_number") @db.VarChar(20) // Encrypted
+  status                    UserStatus @default(ACTIVE)
+  role                      UserRole   @default(USER)
+  referralCode              String     @unique @map("referral_code") @db.VarChar(20)
+  referredById              String?    @map("referred_by_id")
+  referredBy                User?      @relation("UserReferrals", fields: [referredById], references: [id])
+  referredUsers             User[]     @relation("UserReferrals")
+
+  // Relations
+  profile               UserProfile?
+  createdTasks          Task[]              @relation("TaskCreator")
+  taskApplications      TaskApplication[]
+  taskSubmissions       TaskSubmission[]
+  walletTransactions    WalletTransaction[]
+  sentNotifications     Notification[]      @relation("NotificationSender")
+  receivedNotifications Notification[]      @relation("NotificationReceiver")
+  referralsGiven        Referral[]          @relation("Referrer")
+  referralsReceived     Referral[]          @relation("Referred")
+  adminActions          AdminAction[]
+  bankAccounts          BankAccount[]
+  withdrawalOtps        WithdrawalOtp[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([email])
+  @@index([userType])
+  @@index([status])
+  @@index([referralCode])
+  @@map("users")
+}
+
+model UserProfile {
+  id                 String  @id @default(uuid())
+  userId             String  @unique @map("user_id")
+  user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName          String? @map("first_name") @db.VarChar(100)
+  lastName           String? @map("last_name") @db.VarChar(100)
+  age                Int?
+  hobbiesInterests   Json?   @map("hobbies_interests") // Array of strings
+  employmentStatus   String? @map("employment_status") @db.VarChar(50)
+  state              String? @db.VarChar(100)
+  city               String? @db.VarChar(100)
+  socialMediaHandles Json?   @map("social_media_handles") // {twitter, linkedin, instagram, tiktok, snapchat, facebook}
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("user_profiles")
+}
+
+model Task {
+  id                    String       @id @default(uuid())
+  creatorId             String       @map("creator_id")
+  creator               User         @relation("TaskCreator", fields: [creatorId], references: [id])
+  title                 String       @db.VarChar(255)
+  description           String?      @db.Text
+  platforms             Json // Array of platform strings
+  goals                 Json // Array of goal strings
+  postType              String?      @map("post_type") @db.VarChar(50)
+  resourceLink          String?      @map("resource_link") @db.Text
+  audiencePreferences   Json?        @map("audience_preferences")
+  targeting             Json? // {location, language, interests, age_group, gender}
+  scheduleType          ScheduleType @map("schedule_type")
+  scheduleStart         DateTime     @map("schedule_start") @db.Timestamptz(6)
+  scheduleEnd           DateTime?    @map("schedule_end") @db.Timestamptz(6)
+  commentsInstructions  String?      @map("comments_instructions") @db.Text
+  hashtags              Json? // Array of strings
+  buzzwords             Json? // Array of strings
+  status                TaskStatus   @default(DRAFT)
+  budgetPerTask         Decimal      @map("budget_per_task") @db.Decimal(10, 2)
+  totalBudget           Decimal      @map("total_budget") @db.Decimal(10, 2)
+  platformFeePercentage Decimal      @default(5) @map("platform_fee_percentage") @db.Decimal(5, 2)
+  aiGeneratedBrief      String?      @map("ai_generated_brief") @db.Text
+  llmContextFile        String?      @map("llm_context_file") @db.Text // LLM.txt content
+
+  // Relations
+  applications TaskApplication[]
+  submissions  TaskSubmission[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([creatorId])
+  @@index([status])
+  @@index([scheduleStart])
+  @@map("tasks")
+}
+
+model TaskApplication {
+  id          String            @id @default(uuid())
+  taskId      String            @map("task_id")
+  task        Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskerId    String            @map("tasker_id")
+  tasker      User              @relation(fields: [taskerId], references: [id])
+  status      ApplicationStatus @default(PENDING)
+  appliedAt   DateTime          @default(now()) @map("applied_at") @db.Timestamptz(6)
+  approvedAt  DateTime?         @map("approved_at") @db.Timestamptz(6)
+  completedAt DateTime?         @map("completed_at") @db.Timestamptz(6)
+
+  // Relations
+  submissions TaskSubmission[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([taskId, taskerId]) // Prevent duplicate applications
+  @@index([taskerId])
+  @@index([status])
+  @@map("task_applications")
+}
+
+model TaskSubmission {
+  id                  String             @id @default(uuid())
+  applicationId       String             @map("application_id")
+  application         TaskApplication    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  taskId              String             @map("task_id")
+  task                Task               @relation(fields: [taskId], references: [id])
+  taskerId            String             @map("tasker_id")
+  tasker              User               @relation(fields: [taskerId], references: [id])
+  proofType           ProofType          @map("proof_type")
+  proofUrl            String             @map("proof_url") @db.Text
+  submissionText      String?            @map("submission_text") @db.Text
+  verificationStatus  VerificationStatus @default(PENDING) @map("verification_status")
+  aiVerificationScore Decimal?           @map("ai_verification_score") @db.Decimal(5, 2) // 0-100
+  verifiedAt          DateTime?          @map("verified_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([taskerId])
+  @@index([verificationStatus])
+  @@index([taskId])
+  @@map("task_submissions")
+}
+
+model WalletTransaction {
+  id                  String              @id @default(uuid())
+  userId              String              @map("user_id")
+  user                User                @relation(fields: [userId], references: [id])
+  transactionType     TransactionType     @map("transaction_type")
+  amount              Decimal             @db.Decimal(10, 2)
+  balanceAfter        Decimal             @map("balance_after") @db.Decimal(10, 2)
+  transactionCategory TransactionCategory @map("transaction_category")
+  referenceId         String?             @map("reference_id") // Links to task/submission/withdrawal
+  description         String              @db.VarChar(500)
+  status              TransactionStatus   @default(PENDING)
+
+  // Double-entry ledger: Each transaction has a counterpart
+  counterpartId           String?             @map("counterpart_id") // For double-entry
+  counterpart             WalletTransaction?  @relation("TransactionCounterpart", fields: [counterpartId], references: [id])
+  counterpartTransactions WalletTransaction[] @relation("TransactionCounterpart")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([transactionType])
+  @@index([transactionCategory])
+  @@index([status])
+  @@index([createdAt])
+  @@index([referenceId])
+  @@map("wallet_transactions")
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  senderId    String?          @map("sender_id") // null for system notifications
+  sender      User?            @relation("NotificationSender", fields: [senderId], references: [id])
+  receiverId  String           @map("receiver_id")
+  receiver    User             @relation("NotificationReceiver", fields: [receiverId], references: [id])
+  type        NotificationType
+  title       String           @db.VarChar(255)
+  message     String           @db.Text
+  data        Json? // Additional data (taskId, submissionId, etc.)
+  read        Boolean          @default(false)
+  emailSent   Boolean          @default(false) @map("email_sent")
+  emailSentAt DateTime?        @map("email_sent_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+
+  @@index([receiverId])
+  @@index([read])
+  @@index([type])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model Referral {
+  id           String         @id @default(uuid())
+  referrerId   String         @map("referrer_id")
+  referrer     User           @relation("Referrer", fields: [referrerId], references: [id])
+  referredId   String         @map("referred_id")
+  referred     User           @relation("Referred", fields: [referredId], references: [id])
+  rewardAmount Decimal        @default(100) @map("reward_amount") @db.Decimal(10, 2)
+  status       ReferralStatus @default(PENDING)
+  completedAt  DateTime?      @map("completed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([referrerId, referredId])
+  @@index([referrerId])
+  @@index([status])
+  @@map("referrals")
+}
+
+model AdminAction {
+  id           String          @id @default(uuid())
+  adminId      String          @map("admin_id")
+  admin        User            @relation(fields: [adminId], references: [id])
+  actionType   AdminActionType @map("action_type")
+  targetUserId String?         @map("target_user_id")
+  targetTaskId String?         @map("target_task_id")
+  reason       String?         @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([adminId])
+  @@index([actionType])
+  @@map("admin_actions")
+}
+
+model BankAccount {
+  id                    String  @id @default(uuid())
+  userId                String  @map("user_id")
+  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountName           String  @map("account_name") @db.VarChar(255)
+  accountNumber         String  @map("account_number") @db.VarChar(20)
+  bankCode              String  @map("bank_code") @db.VarChar(10)
+  bankName              String  @map("bank_name") @db.VarChar(255)
+  isVerified            Boolean @default(false) @map("is_verified")
+  isDefault             Boolean @default(false) @map("is_default")
+  paystackRecipientCode String? @map("paystack_recipient_code") @db.VarChar(100)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([isVerified])
+  @@map("bank_accounts")
+}
+
+model WithdrawalOtp {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  otp       String   @db.VarChar(10)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  used      Boolean   @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([used])
+  @@index([expiresAt])
+  @@map("withdrawal_otps")
+}
