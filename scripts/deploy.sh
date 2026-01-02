@@ -20,19 +20,19 @@ git pull origin main
 
 # Install dependencies
 echo "📦 Installing dependencies..."
-npm install --production
+npm install --production --legacy-peer-deps
 
 # Build application
 echo "🔨 Building application..."
 npm run build
 
-# Generate Prisma client
+# Generate Prisma client (use local version)
 echo "🔄 Generating Prisma client..."
-npx prisma generate
+./node_modules/.bin/prisma generate || npx --yes prisma@5.19.1 generate
 
 # Run database migrations
 echo "🗄️  Running database migrations..."
-npx prisma migrate deploy
+./node_modules/.bin/prisma migrate deploy || npx --yes prisma@5.19.1 migrate deploy
 
 # Restart PM2 process
 echo "🔄 Restarting application..."

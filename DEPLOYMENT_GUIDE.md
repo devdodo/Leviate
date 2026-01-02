@@ -122,18 +122,39 @@ cd /var/www
 
 # Clone your repository (replace with your repo URL)
 sudo git clone https://github.com/your-username/elevare.git
-cd elevare/elevare
+
+# Fix ownership - IMPORTANT: Do this before npm install
+sudo chown -R ubuntu:ubuntu /var/www/elevare
+
+# Navigate to the NestJS application directory
+# IMPORTANT: Your repo structure is: /var/www/elevare/elevare/
+cd /var/www/elevare/elevare
+
+# Verify you're in the right directory
+ls -la
+# Should see: prisma/, src/, package.json, tsconfig.json
 
 # Or if you're uploading files directly:
-# sudo mkdir -p /var/www/elevare
+# sudo mkdir -p /var/www/elevare/elevare
+# sudo chown -R ubuntu:ubuntu /var/www/elevare
 # Upload your files via SCP or SFTP
 ```
 
 ### 5.2 Install Application Dependencies
 
 ```bash
+# IMPORTANT: Make sure you're in the elevare subdirectory
 cd /var/www/elevare/elevare
-npm install --production
+
+# Verify you're in the right place
+ls -la prisma/schema.prisma
+# Should show the file, not an error
+
+# Install with legacy peer deps to resolve reflect-metadata conflict
+npm install --production --legacy-peer-deps
+
+# Or if installing all dependencies (including dev):
+npm install --legacy-peer-deps
 ```
 
 ### 5.3 Build Application
@@ -218,15 +239,26 @@ sudo chown ubuntu:ubuntu /var/www/elevare/elevare/.env
 ```bash
 cd /var/www/elevare/elevare
 
-# Run migrations
-npx prisma migrate deploy
+# IMPORTANT: Install dependencies first to get local Prisma
+npm install --production --legacy-peer-deps
 
-# Generate Prisma client
-npx prisma generate
+# Use local Prisma binary (ensures correct version)
+./node_modules/.bin/prisma generate
+
+# Run migrations
+./node_modules/.bin/prisma migrate deploy
 
 # Seed database (if needed)
 npm run seed
 ```
+
+**Alternative:** If you prefer using npx, specify the version:
+```bash
+npx --yes prisma@5.19.1 generate
+npx --yes prisma@5.19.1 migrate deploy
+```
+
+**Note:** `npx prisma` may download Prisma 7.x from the registry. Always use the local binary (`./node_modules/.bin/prisma`) or specify the version (`prisma@5.19.1`) to ensure compatibility.
 
 ### 7.2 Verify Database Connection
 
@@ -611,7 +643,7 @@ psql "postgresql://username:password@host:5432/postgres?sslmode=require"
 ```bash
 cd /var/www/elevare/elevare
 git pull origin main
-npm install --production
+npm install --production --legacy-peer-deps
 npm run build
 npx prisma generate
 npx prisma migrate deploy

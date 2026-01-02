@@ -24,7 +24,9 @@
     "apply-migration": "node scripts/apply-missing-migration.js",
     "fix-enum": "node scripts/fix-user-type-enum.js",
     "apply-withdrawal-otp-migration": "node scripts/apply-withdrawal-otp-migration.js",
-    "prisma:generate": "npx prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate:dev": "prisma migrate dev",
     "prisma:force-generate": "node scripts/force-regenerate-prisma.js"
   },
   "prisma": {
