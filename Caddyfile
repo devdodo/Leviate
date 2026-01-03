@@ -3,7 +3,7 @@
 # IMPORTANT: Replace 'api.yourdomain.com' with your actual domain
 
 # Main API domain
-api.yourdomain.com {
+backend.leviateapp.com {
     # Reverse proxy to NestJS application
     reverse_proxy localhost:3000 {
         # Preserve original client IP
@@ -54,12 +54,12 @@ api.yourdomain.com {
         respond 204
     }
     
-    # Logging
-    log {
-        output file /var/log/caddy/api.log
-        format json
-        level INFO
-    }
+    # Logging (commented out to avoid permission issues - use systemd journal instead)
+    # log {
+    #     output file /var/log/caddy/api.log
+    #     format json
+    #     level INFO
+    # }
     
     # Compression
     encode gzip zstd
@@ -75,8 +75,8 @@ api.yourdomain.com {
 }
 
 # Redirect www to non-www (optional)
-www.api.yourdomain.com {
-    redir https://api.yourdomain.com{uri} permanent
+www.backend.leviateapp.com {
+    redir https://backend.leviateapp.com{uri} permanent
 }
 
 # Optional: Frontend domain configuration
