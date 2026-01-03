@@ -12,11 +12,6 @@ backend.leviateapp.com {
         header_up X-Forwarded-Proto {scheme}
         header_up Host {host}
         
-        # Health check
-        health_uri /api/health
-        health_interval 30s
-        health_timeout 5s
-        
         # Transport settings
         transport http {
             dial_timeout 10s
