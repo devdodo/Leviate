@@ -85,7 +85,8 @@ async function bootstrap() {
   }
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  // Listen on all interfaces (0.0.0.0) to allow Caddy reverse proxy
+  await app.listen(port, '0.0.0.0');
   console.log(`\n🚀 Application is running on: http://localhost:${port}\n`);
   
   if (swaggerEnabled) {

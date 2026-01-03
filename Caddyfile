@@ -1,0 +1,100 @@
+# Caddy Configuration for Leviate API
+# Place this file at: /etc/caddy/Caddyfile
+# IMPORTANT: Replace 'api.yourdomain.com' with your actual domain
+
+# Main API domain
+api.yourdomain.com {
+    # Reverse proxy to NestJS application
+    reverse_proxy localhost:3000 {
+        # Preserve original client IP
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up Host {host}
+        
+        # Health check
+        health_uri /api/health
+        health_interval 30s
+        health_timeout 5s
+        
+        # Transport settings
+        transport http {
+            dial_timeout 10s
+        }
+    }
+    
+    # Security headers
+    header {
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+        
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        
+        # Remove server header
+        -Server
+        
+        # HSTS (HTTP Strict Transport Security)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    }
+    
+    # CORS headers (if needed for your frontend)
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+        header Access-Control-Max-Age "3600"
+        respond 204
+    }
+    
+    # Logging
+    log {
+        output file /var/log/caddy/api.log
+        format json
+        level INFO
+    }
+    
+    # Compression
+    encode gzip zstd
+    
+    # Rate limiting (optional - you can also use NestJS throttler)
+    # rate_limit {
+    #     zone dynamic {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+}
+
+# Redirect www to non-www (optional)
+www.api.yourdomain.com {
+    redir https://api.yourdomain.com{uri} permanent
+}
+
+# Optional: Frontend domain configuration
+# yourdomain.com {
+#     root * /var/www/leviate-frontend/dist
+#     try_files {path} /index.html
+#     
+#     # API proxy
+#     handle_path /api/* {
+#         reverse_proxy localhost:3000
+#     }
+#     
+#     encode gzip zstd
+#     
+#     header {
+#         X-Content-Type-Options "nosniff"
+#         X-Frame-Options "SAMEORIGIN"
+#         Referrer-Policy "strict-origin-when-cross-origin"
+#     }
+# }
+
