@@ -11,7 +11,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
-import { TaskStatus, ApplicationStatus, UserType } from '@prisma/client';
+import { TaskStatus, ApplicationStatus, UserType, TaskType, TaskCategory, ContentType } from '@prisma/client';
 
 @Injectable()
 export class TasksService {
@@ -51,7 +51,8 @@ export class TasksService {
           title: createTaskDto.title,
           description: createTaskDto.description,
           platforms: createTaskDto.platforms,
-          goals: createTaskDto.goals,
+          category: createTaskDto.category,
+          contentType: createTaskDto.contentType,
           targeting: createTaskDto.targeting,
           commentsInstructions: createTaskDto.commentsInstructions,
           hashtags: createTaskDto.hashtags,
@@ -69,11 +70,12 @@ export class TasksService {
     const task = await this.prisma.task.create({
       data: {
         creatorId: userId,
+        taskType: createTaskDto.taskType,
+        category: createTaskDto.category,
         title: createTaskDto.title,
         description: createTaskDto.description,
         platforms: createTaskDto.platforms,
-        goals: createTaskDto.goals,
-        postType: createTaskDto.postType,
+        contentType: createTaskDto.contentType,
         resourceLink: createTaskDto.resourceLink,
         audiencePreferences: createTaskDto.audiencePreferences || {},
         targeting: (createTaskDto.targeting || {}) as any,
@@ -85,8 +87,7 @@ export class TasksService {
         commentsInstructions: createTaskDto.commentsInstructions,
         hashtags: createTaskDto.hashtags || [],
         buzzwords: createTaskDto.buzzwords || [],
-        budgetPerTask: createTaskDto.budgetPerTask,
-        totalBudget: createTaskDto.totalBudget,
+        budget: createTaskDto.budget,
         status,
         aiGeneratedBrief: brief,
         llmContextFile: llmContext,
@@ -126,13 +127,17 @@ export class TasksService {
     }
 
     if (goal) {
-      where.goals = { has: goal };
+      // Support both new category field and legacy goals field
+      where.OR = [
+        { category: goal },
+        { goals: { has: goal } }, // Legacy support
+      ];
     }
 
     if (minBudget !== undefined || maxBudget !== undefined) {
-      where.budgetPerTask = {};
-      if (minBudget !== undefined) where.budgetPerTask.gte = minBudget;
-      if (maxBudget !== undefined) where.budgetPerTask.lte = maxBudget;
+      where.budget = {};
+      if (minBudget !== undefined) where.budget.gte = minBudget;
+      if (maxBudget !== undefined) where.budget.lte = maxBudget;
     }
 
     if (search) {
@@ -143,7 +148,14 @@ export class TasksService {
     }
 
     const orderBy: any = {};
-    orderBy[sortBy] = sortOrder;
+    // Map legacy field names to new ones
+    const sortFieldMap: Record<string, string> = {
+      budgetPerTask: 'budget',
+      createdAt: 'createdAt',
+      scheduleStart: 'scheduleStart',
+    };
+    const mappedSortBy = sortFieldMap[sortBy] || sortBy;
+    orderBy[mappedSortBy] = sortOrder;
 
     const [tasks, total] = await Promise.all([
       this.prisma.task.findMany({
@@ -266,6 +278,12 @@ export class TasksService {
     if (updateTaskDto.title) updateData.title = updateTaskDto.title;
     if (updateTaskDto.description) updateData.description = updateTaskDto.description;
     if (updateTaskDto.platforms) updateData.platforms = updateTaskDto.platforms;
+    if (updateTaskDto.taskType) updateData.taskType = updateTaskDto.taskType;
+    if (updateTaskDto.category) updateData.category = updateTaskDto.category;
+    if (updateTaskDto.contentType) updateData.contentType = updateTaskDto.contentType;
+    if (updateTaskDto.resourceLink) updateData.resourceLink = updateTaskDto.resourceLink;
+    if (updateTaskDto.budget) updateData.budget = updateTaskDto.budget;
+    // Legacy support
     if (updateTaskDto.goals) updateData.goals = updateTaskDto.goals;
     if (updateTaskDto.budgetPerTask) updateData.budgetPerTask = updateTaskDto.budgetPerTask;
     if (updateTaskDto.totalBudget) updateData.totalBudget = updateTaskDto.totalBudget;

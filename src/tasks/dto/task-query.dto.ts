@@ -39,7 +39,7 @@ export class TaskQueryDto extends PaginationDto {
   @IsString()
   search?: string;
 
-  @ApiProperty({ required: false, example: 'budgetPerTask', enum: ['budgetPerTask', 'createdAt', 'scheduleStart'] })
+  @ApiProperty({ required: false, example: 'budget', enum: ['budget', 'createdAt', 'scheduleStart'] })
   @IsOptional()
   @IsString()
   sortBy?: string;

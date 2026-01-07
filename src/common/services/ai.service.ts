@@ -24,7 +24,9 @@ export class AIService {
     title: string;
     description?: string;
     platforms: string[];
-    goals: string[];
+    category?: string;
+    contentType?: string;
+    goals?: string[]; // Legacy support
     targeting?: any;
     commentsInstructions?: string;
     hashtags?: string[];

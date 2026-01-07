@@ -11,9 +11,39 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ScheduleType, TaskStatus } from '@prisma/client';
+import { ScheduleType, TaskType, TaskCategory, ContentType } from '@prisma/client';
 
 export class TargetingDto {
+  @ApiProperty({
+    required: false,
+    example: ['Tech', 'Fashion', 'Music'],
+    description: 'Array of interest tags',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interests?: string[];
+
+  @ApiProperty({
+    required: false,
+    example: ['18-24', '25-34'],
+    description: 'Age group ranges: 13-17, 18-24, 25-34, 35-44, 45-54, 55+',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  ageGroup?: string[];
+
+  @ApiProperty({
+    required: false,
+    example: 'All',
+    enum: ['All', 'Male', 'Female', 'Other'],
+    description: 'Gender targeting',
+  })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
   @ApiProperty({ required: false, example: 'Lagos, Nigeria' })
   @IsOptional()
   @IsString()
@@ -23,53 +53,64 @@ export class TargetingDto {
   @IsOptional()
   @IsString()
   language?: string;
-
-  @ApiProperty({ required: false, example: ['Technology', 'Gaming'] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  interests?: string[];
-
-  @ApiProperty({ required: false, example: { min: 18, max: 35 } })
-  @IsOptional()
-  @IsObject()
-  ageGroup?: { min: number; max: number };
-
-  @ApiProperty({ required: false, example: 'All' })
-  @IsOptional()
-  @IsString()
-  gender?: string;
 }
 
 export class CreateTaskDto {
-  @ApiProperty({ example: 'Create Instagram Post for Product Launch' })
+  @ApiProperty({
+    enum: TaskType,
+    example: TaskType.SINGLE,
+    description: 'Task type: SINGLE (one-time) or MULTI (multiple engagements)',
+  })
+  @IsEnum(TaskType)
+  taskType: TaskType;
+
+  @ApiProperty({
+    enum: TaskCategory,
+    example: TaskCategory.MAKE_POST,
+    description: 'Task category: MAKE_POST, COMMENT_POST, LIKE_SHARE_SAVE_REPOST, FOLLOW_ACCOUNT',
+  })
+  @IsEnum(TaskCategory)
+  category: TaskCategory;
+
+  @ApiProperty({
+    example: 'Create Instagram Post for Product Launch',
+    description: 'Task title',
+  })
   @IsString()
   title: string;
 
-  @ApiProperty({ required: false, example: 'Create engaging Instagram post for new product' })
+  @ApiProperty({
+    required: false,
+    example: 'Create engaging Instagram post for new product',
+    description: 'Task description or notes',
+  })
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: ['instagram', 'twitter'], description: 'Platforms for the task' })
+  @ApiProperty({
+    example: ['instagram', 'twitter', 'facebook'],
+    description: 'Platforms: instagram, twitter, facebook, youtube, tiktok, linkedin',
+  })
   @IsArray()
   @IsString({ each: true })
   platforms: string[];
 
   @ApiProperty({
-    example: ['create_post', 'follow_account'],
-    description: 'Goals: create_post, apollos_package, follow_account, comment',
+    required: false,
+    enum: ContentType,
+    example: ContentType.VIDEO,
+    description: 'Content type: VIDEO, TEXT, or IMAGE',
   })
-  @IsArray()
-  @IsString({ each: true })
-  goals: string[];
-
-  @ApiProperty({ required: false, example: 'image' })
   @IsOptional()
-  @IsString()
-  postType?: string;
+  @IsEnum(ContentType)
+  contentType?: ContentType;
 
-  @ApiProperty({ required: false, example: 'https://example.com/resource' })
+  @ApiProperty({
+    required: false,
+    example: 'https://example.com/post/123',
+    description: 'Link or Sample Post (optional)',
+  })
   @IsOptional()
   @IsString()
   resourceLink?: string;
@@ -89,16 +130,26 @@ export class CreateTaskDto {
   @IsEnum(ScheduleType)
   scheduleType: ScheduleType;
 
-  @ApiProperty({ example: '2024-01-01T10:00:00Z' })
+  @ApiProperty({
+    example: '2024-01-01T10:00:00Z',
+    description: 'Campaign start date',
+  })
   @IsDateString()
   scheduleStart: string;
 
-  @ApiProperty({ required: false, example: '2024-01-01T18:00:00Z' })
+  @ApiProperty({
+    required: false,
+    example: '2024-01-01T18:00:00Z',
+    description: 'Campaign end date',
+  })
   @IsOptional()
   @IsDateString()
   scheduleEnd?: string;
 
-  @ApiProperty({ required: false, example: 'Use engaging visuals and include product benefits' })
+  @ApiProperty({
+    required: false,
+    example: 'Use engaging visuals and include product benefits',
+  })
   @IsOptional()
   @IsString()
   commentsInstructions?: string;
@@ -115,19 +166,21 @@ export class CreateTaskDto {
   @IsString({ each: true })
   buzzwords?: string[];
 
-  @ApiProperty({ example: 2000, minimum: 1, description: 'Budget per task in Naira' })
+  @ApiProperty({
+    example: 500,
+    minimum: 5,
+    description: 'Budget amount in Naira',
+  })
   @IsNumber()
-  @Min(1)
-  budgetPerTask: number;
+  @Min(5)
+  budget: number;
 
-  @ApiProperty({ example: 50000, minimum: 1, description: 'Total budget in Naira' })
-  @IsNumber()
-  @Min(1)
-  totalBudget: number;
-
-  @ApiProperty({ required: false, default: false, description: 'Save as draft' })
+  @ApiProperty({
+    required: false,
+    default: false,
+    description: 'Save as draft',
+  })
   @IsOptional()
   @IsString()
   saveAsDraft?: string;
 }
-

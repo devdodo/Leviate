@@ -2,21 +2,31 @@
 -- This migration updates UserType enum from CREATOR/TASKER to CREATOR/CONTRIBUTOR
 -- and UserRole enum from USER/ADMIN to USER/ADMIN/SUPERADMIN
 
--- Step 1: Update UserType enum (TASKER -> CONTRIBUTOR)
--- First, add the new value
-ALTER TYPE "UserType" ADD VALUE IF NOT EXISTS 'CONTRIBUTOR';
+-- Step 1: Add CONTRIBUTOR to UserType enum (must be done first, before using it)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_enum 
+        WHERE enumlabel = 'CONTRIBUTOR' 
+        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'UserType')
+    ) THEN
+        ALTER TYPE "UserType" ADD VALUE 'CONTRIBUTOR';
+    END IF;
+END $$;
 
--- Update existing TASKER records to CONTRIBUTOR
-UPDATE "users" SET "user_type" = 'CONTRIBUTOR' WHERE "user_type" = 'TASKER';
+-- Step 2: Add SUPERADMIN to UserRole enum
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_enum 
+        WHERE enumlabel = 'SUPERADMIN' 
+        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'UserRole')
+    ) THEN
+        ALTER TYPE "UserRole" ADD VALUE 'SUPERADMIN';
+    END IF;
+END $$;
 
--- Note: PostgreSQL doesn't support removing enum values directly
--- The old TASKER value will remain in the enum but won't be used
--- You can manually remove it later if needed using:
--- ALTER TYPE "UserType" RENAME TO "UserType_old";
--- CREATE TYPE "UserType" AS ENUM ('CREATOR', 'CONTRIBUTOR');
--- ALTER TABLE "users" ALTER COLUMN "user_type" TYPE "UserType" USING "user_type"::text::"UserType";
--- DROP TYPE "UserType_old";
-
--- Step 2: Update UserRole enum (add SUPERADMIN)
-ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'SUPERADMIN';
+-- Step 3: Update existing TASKER records to CONTRIBUTOR
+-- Note: This must be done in a separate statement after the enum value is added
+UPDATE "users" SET "user_type" = 'CONTRIBUTOR'::"UserType" WHERE "user_type" = 'TASKER'::"UserType";
 

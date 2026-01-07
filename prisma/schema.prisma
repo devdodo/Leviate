@@ -31,6 +31,24 @@ enum UserRole {
   SUPERADMIN
 }
 
+enum TaskType {
+  SINGLE
+  MULTI
+}
+
+enum TaskCategory {
+  MAKE_POST
+  COMMENT_POST
+  LIKE_SHARE_SAVE_REPOST
+  FOLLOW_ACCOUNT
+}
+
+enum ContentType {
+  VIDEO
+  TEXT
+  IMAGE
+}
+
 enum ScheduleType {
   FIXED
   VARIABLE
@@ -184,14 +202,15 @@ model Task {
   id                    String       @id @default(uuid())
   creatorId             String       @map("creator_id")
   creator               User         @relation("TaskCreator", fields: [creatorId], references: [id])
+  taskType              TaskType     @map("task_type") @default(SINGLE)
+  category              TaskCategory @map("category")
   title                 String       @db.VarChar(255)
   description           String?      @db.Text
-  platforms             Json // Array of platform strings
-  goals                 Json // Array of goal strings
-  postType              String?      @map("post_type") @db.VarChar(50)
-  resourceLink          String?      @map("resource_link") @db.Text
+  platforms             Json // Array of platform strings: instagram, twitter, facebook, youtube, tiktok, linkedin
+  contentType           ContentType? @map("content_type")
+  resourceLink          String?      @map("resource_link") @db.Text // Link or Sample Post
   audiencePreferences   Json?        @map("audience_preferences")
-  targeting             Json? // {location, language, interests, age_group, gender}
+  targeting             Json? // {interests: string[], ageGroup: string[], gender: string, location?: string, language?: string}
   scheduleType          ScheduleType @map("schedule_type")
   scheduleStart         DateTime     @map("schedule_start") @db.Timestamptz(6)
   scheduleEnd           DateTime?    @map("schedule_end") @db.Timestamptz(6)
@@ -199,11 +218,16 @@ model Task {
   hashtags              Json? // Array of strings
   buzzwords             Json? // Array of strings
   status                TaskStatus   @default(DRAFT)
-  budgetPerTask         Decimal      @map("budget_per_task") @db.Decimal(10, 2)
-  totalBudget           Decimal      @map("total_budget") @db.Decimal(10, 2)
+  budget                Decimal      @map("budget") @db.Decimal(10, 2) // Single budget amount
   platformFeePercentage Decimal      @default(5) @map("platform_fee_percentage") @db.Decimal(5, 2)
   aiGeneratedBrief      String?      @map("ai_generated_brief") @db.Text
   llmContextFile        String?      @map("llm_context_file") @db.Text // LLM.txt content
+  
+  // Legacy fields (kept for backward compatibility)
+  goals                 Json? // Deprecated: use category instead
+  postType              String?      @map("post_type") @db.VarChar(50) // Deprecated: use contentType instead
+  budgetPerTask         Decimal?     @map("budget_per_task") @db.Decimal(10, 2) // Deprecated
+  totalBudget           Decimal?     @map("total_budget") @db.Decimal(10, 2) // Deprecated
 
   // Relations
   applications TaskApplication[]
