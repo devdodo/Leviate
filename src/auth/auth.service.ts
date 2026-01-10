@@ -12,10 +12,12 @@ import { EmailService } from '../common/services/email.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto'; 
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UserType, ReferralStatus } from '@prisma/client';
+import type { StringValue } from 'ms';
 
 @Injectable()
 export class AuthService {
@@ -104,6 +106,52 @@ export class AuthService {
       data: {
         userId: user.id,
         email: user.email,
+      },
+    };
+  }
+
+  async resendVerification(resendVerificationDto: ResendVerificationDto) {
+    const { email } = resendVerificationDto;
+
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      // Don't reveal if user exists or not for security
+      return {
+        message: 'If an account exists with this email, a verification code has been sent.',
+      };
+    }
+
+    if (user.emailVerified) {
+      throw new BadRequestException('Email is already verified');
+    }
+
+    // Generate new verification code
+    const verificationCode = this.generateVerificationCode();
+    const verificationCodeExpiresAt = new Date();
+    verificationCodeExpiresAt.setMinutes(
+      verificationCodeExpiresAt.getMinutes() + 15,
+    );
+
+    // Update user with new verification code
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        verificationCode,
+        verificationCodeExpiresAt,
+      },
+    });
+
+    // Send OTP email via Zeptomail
+    await this.emailService.sendOTP(email, verificationCode);
+
+    return {
+      message: 'Verification code has been resent. Please check your email.',
+      data: {
+        email: user.email,
+        ...(process.env.NODE_ENV === 'development' && { verificationCode }),
       },
     };
   }
@@ -206,12 +254,20 @@ export class AuthService {
       role: user.role,
     };
 
-    const accessToken = this.jwtService.sign(payload);
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: (this.configService.get<string>('JWT_EXPIRES_IN') || '15m') as StringValue,
+    });
+
+    const refreshToken = this.jwtService.sign(payload, {
+      secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+      expiresIn: (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d') as StringValue,
+    });
 
     return {
       message: 'Login successful',
       data: {
         accessToken,
+        refreshToken,
         user: {
           id: user.id,
           email: user.email,
@@ -296,6 +352,56 @@ export class AuthService {
       message:
         'If an account exists with this email, a default password has been sent. Please change it after logging in.',
     };
+  }
+
+  async refreshToken(refreshToken: string) {
+    try {
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+      });
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+      });
+
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
+      if (user.status === 'DELETED') {
+        throw new UnauthorizedException('User account not found');
+      }
+
+      if (user.status === 'SUSPENDED') {
+        throw new UnauthorizedException('User account is suspended');
+      }
+
+      const newPayload = {
+        sub: user.id,
+        email: user.email,
+        userType: user.userType,
+        role: user.role,
+      };
+
+      const accessToken = this.jwtService.sign(newPayload, {
+        expiresIn: (this.configService.get<string>('JWT_EXPIRES_IN') || '15m') as StringValue,
+      });
+
+      const newRefreshToken = this.jwtService.sign(newPayload, {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d') as StringValue,
+      });
+
+      return {
+        message: 'Token refreshed successfully',
+        data: {
+          accessToken,
+          refreshToken: newRefreshToken,
+        },
+      };
+    } catch (error) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {

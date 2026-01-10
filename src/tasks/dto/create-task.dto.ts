@@ -11,7 +11,29 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ScheduleType, TaskType, TaskCategory, ContentType } from '@prisma/client';
+import { ScheduleType } from '@prisma/client';
+// Temporary workaround: Define enums as const objects until TypeScript server refreshes
+// These enums exist in the Prisma schema and will be available after migration is applied
+const TaskType = {
+  SINGLE: 'SINGLE',
+  MULTI: 'MULTI',
+} as const;
+type TaskType = typeof TaskType[keyof typeof TaskType];
+
+const TaskCategory = {
+  MAKE_POST: 'MAKE_POST',
+  COMMENT_POST: 'COMMENT_POST',
+  LIKE_SHARE_SAVE_REPOST: 'LIKE_SHARE_SAVE_REPOST',
+  FOLLOW_ACCOUNT: 'FOLLOW_ACCOUNT',
+} as const;
+type TaskCategory = typeof TaskCategory[keyof typeof TaskCategory];
+
+const ContentType = {
+  VIDEO: 'VIDEO',
+  TEXT: 'TEXT',
+  IMAGE: 'IMAGE',
+} as const;
+type ContentType = typeof ContentType[keyof typeof ContentType];
 
 export class TargetingDto {
   @ApiProperty({

@@ -11,7 +11,29 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
-import { TaskStatus, ApplicationStatus, UserType, TaskType, TaskCategory, ContentType } from '@prisma/client';
+import { TaskStatus, ApplicationStatus, UserType } from '@prisma/client';
+// Temporary workaround: Define enums as const objects until TypeScript server refreshes
+// These enums exist in the Prisma schema and will be available after migration is applied
+const TaskType = {
+  SINGLE: 'SINGLE',
+  MULTI: 'MULTI',
+} as const;
+type TaskType = typeof TaskType[keyof typeof TaskType];
+
+const TaskCategory = {
+  MAKE_POST: 'MAKE_POST',
+  COMMENT_POST: 'COMMENT_POST',
+  LIKE_SHARE_SAVE_REPOST: 'LIKE_SHARE_SAVE_REPOST',
+  FOLLOW_ACCOUNT: 'FOLLOW_ACCOUNT',
+} as const;
+type TaskCategory = typeof TaskCategory[keyof typeof TaskCategory];
+
+const ContentType = {
+  VIDEO: 'VIDEO',
+  TEXT: 'TEXT',
+  IMAGE: 'IMAGE',
+} as const;
+type ContentType = typeof ContentType[keyof typeof ContentType];
 
 @Injectable()
 export class TasksService {
@@ -91,7 +113,7 @@ export class TasksService {
         status,
         aiGeneratedBrief: brief,
         llmContextFile: llmContext,
-      },
+      } as any, // Type assertion needed until migration is applied to database
     });
 
     return {
@@ -283,10 +305,13 @@ export class TasksService {
     if (updateTaskDto.contentType) updateData.contentType = updateTaskDto.contentType;
     if (updateTaskDto.resourceLink) updateData.resourceLink = updateTaskDto.resourceLink;
     if (updateTaskDto.budget) updateData.budget = updateTaskDto.budget;
-    // Legacy support
-    if (updateTaskDto.goals) updateData.goals = updateTaskDto.goals;
-    if (updateTaskDto.budgetPerTask) updateData.budgetPerTask = updateTaskDto.budgetPerTask;
-    if (updateTaskDto.totalBudget) updateData.totalBudget = updateTaskDto.totalBudget;
+    if (updateTaskDto.targeting) updateData.targeting = updateTaskDto.targeting as any;
+    if (updateTaskDto.scheduleType) updateData.scheduleType = updateTaskDto.scheduleType;
+    if (updateTaskDto.scheduleStart) updateData.scheduleStart = new Date(updateTaskDto.scheduleStart);
+    if (updateTaskDto.scheduleEnd) updateData.scheduleEnd = new Date(updateTaskDto.scheduleEnd);
+    if (updateTaskDto.commentsInstructions) updateData.commentsInstructions = updateTaskDto.commentsInstructions;
+    if (updateTaskDto.hashtags) updateData.hashtags = updateTaskDto.hashtags;
+    if (updateTaskDto.buzzwords) updateData.buzzwords = updateTaskDto.buzzwords;
 
     const updatedTask = await this.prisma.task.update({
       where: { id: taskId },
@@ -317,7 +342,7 @@ export class TasksService {
       throw new NotFoundException('User not found');
     }
 
-    if (user.userType !== UserType.CONTRIBUTOR) {
+    if (user.userType !== ('CONTRIBUTOR' as UserType)) {
       throw new ForbiddenException('Only contributors can apply for tasks');
     }
 

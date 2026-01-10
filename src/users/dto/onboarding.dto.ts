@@ -43,6 +43,9 @@ export class OnboardingDto {
       twitter: '@johndoe',
       linkedin: 'john-doe',
       instagram: '@johndoe',
+      tiktok: '@johndoe',
+      snapchat: 'johndoe',
+      facebook: 'johndoe',
     },
   })
   @IsOptional()
