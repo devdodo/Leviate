@@ -242,7 +242,21 @@ export class UsersService {
 
     return {
       message: 'User information retrieved successfully',
-      data: user,
+      data: {
+        id: user.id,
+        email: user.email,
+        userType: user.userType,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        profileComplete: user.profileComplete,
+        reputationScore: user.reputationScore,
+        ninVerified: user.ninVerified,
+        status: user.status,
+        firstName: user.profile?.firstName || null,
+        lastName: user.profile?.lastName || null,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
     };
   }
 }
