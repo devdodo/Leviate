@@ -196,13 +196,4 @@ export class CreateTaskDto {
   @IsNumber()
   @Min(5)
   budget: number;
-
-  @ApiProperty({
-    required: false,
-    default: false,
-    description: 'Save as draft',
-  })
-  @IsOptional()
-  @IsString()
-  saveAsDraft?: string;
 }

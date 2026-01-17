@@ -15,6 +15,7 @@ import { ReferralsModule } from './referrals/referrals.module';
 import { ReportsModule } from './reports/reports.module';
 import { AdminModule } from './admin/admin.module';
 import { BanksModule } from './banks/banks.module';
+import { UtilitiesModule } from './utilities/utilities.module';
 import { PrismaModule } from './common/prisma.module';
 import { EmailService } from './common/services/email.service';
 import { PaystackService } from './common/services/paystack.service';
@@ -48,6 +49,7 @@ import { AppService } from './app.service';
     ReportsModule,
     AdminModule,
     BanksModule,
+    UtilitiesModule,
   ],
   controllers: [AppController],
   providers: [

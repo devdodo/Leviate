@@ -72,6 +72,8 @@ async function bootstrap() {
       .addTag('Admin', 'Admin control endpoints')
       .addTag('Notifications', 'Notification endpoints')
       .addTag('Banks', 'Bank account and withdrawal management endpoints')
+      .addTag('Utilities', 'Public utility endpoints for frontend')
+      .addTag('Admin Utilities', 'Admin endpoints for managing utility lists')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);

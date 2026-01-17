@@ -162,5 +162,42 @@ export class TasksController {
   ) {
     return this.tasksService.saveDraft(user.id, id, createTaskDto);
   }
+
+  @Post(':id/publish')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Publish a draft task to make it visible to contributors' })
+  @ApiResponse({
+    status: 200,
+    description: 'Task published successfully',
+    type: BaseResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  @ApiResponse({ status: 403, description: 'Forbidden - not your task' })
+  @ApiResponse({ status: 400, description: 'Task cannot be published (missing fields or already published)' })
+  async publishTask(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.tasksService.publishTask(user.id, id);
+  }
+
+  @Get(':id/summary')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Get task summary/preview (for creators before publishing)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Task summary retrieved successfully',
+    type: BaseResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  @ApiResponse({ status: 403, description: 'Forbidden - not your task' })
+  async getTaskSummary(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.tasksService.getTaskSummary(user.id, id);
+  }
 }
 

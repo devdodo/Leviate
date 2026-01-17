@@ -412,3 +412,76 @@ model WithdrawalOtp {
   @@index([expiresAt])
   @@map("withdrawal_otps")
 }
+
+// ============================================
+// UTILITY MODELS (For frontend dropdowns/lists)
+// ============================================
+
+model Interest {
+  id        String   @id @default(uuid())
+  name      String   @unique @db.VarChar(100)
+  isActive  Boolean  @default(true) @map("is_active")
+  order     Int      @default(0) // For sorting
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([order])
+  @@map("interests")
+}
+
+model AgeGroup {
+  id        String   @id @default(uuid())
+  label     String   @unique @db.VarChar(20) // e.g., "13-17", "18-24", "55+"
+  minAge    Int?     @map("min_age") // Optional: for sorting/filtering
+  maxAge    Int?     @map("max_age") // Optional: for sorting/filtering
+  isActive  Boolean  @default(true) @map("is_active")
+  order     Int      @default(0) // For sorting
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([order])
+  @@map("age_groups")
+}
+
+model Gender {
+  id        String   @id @default(uuid())
+  label     String   @unique @db.VarChar(20) // e.g., "All", "Male", "Female", "Other"
+  isActive  Boolean  @default(true) @map("is_active")
+  order     Int      @default(0) // For sorting
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([order])
+  @@map("genders")
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  title     String   @db.VarChar(255)
+  subtitle  String?  @db.VarChar(500)
+  isActive  Boolean  @default(true) @map("is_active")
+  order     Int      @default(0) // For sorting
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([order])
+  @@map("categories")
+}
+
+model Platform {
+  id        String   @id @default(uuid())
+  name      String   @unique @db.VarChar(100) // e.g., "Instagram", "Twitter", "TikTok"
+  icon      String?  @db.Text // URL or base64 encoded icon
+  isActive  Boolean  @default(true) @map("is_active")
+  order     Int      @default(0) // For sorting
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([order])
+  @@map("platforms")
+}
