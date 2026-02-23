@@ -64,20 +64,20 @@ export class TargetingDto {
 
 export class CreateTaskDto {
   @ApiProperty({
-    enum: TaskType,
-    example: TaskType.SINGLE,
-    description: 'Task type: SINGLE (one-time) or MULTI (multiple engagements)',
-  })
-  @IsEnum(TaskType)
-  taskType: TaskType;
-
-  @ApiProperty({
     enum: TaskCategory,
     example: TaskCategory.MAKE_POST,
-    description: 'Task category: MAKE_POST, COMMENT_POST, LIKE_SHARE_SAVE_REPOST, FOLLOW_ACCOUNT',
+    description: 'Task type: MAKE_POST, COMMENT_POST, LIKE_SHARE_SAVE_REPOST, FOLLOW_ACCOUNT (from task-types endpoint taskTypes)',
   })
   @IsEnum(TaskCategory)
-  category: TaskCategory;
+  taskType: TaskCategory;
+
+  @ApiProperty({
+    enum: TaskType,
+    example: TaskType.SINGLE,
+    description: 'Category: SINGLE (one-time) or MULTI (multiple engagements) (from task-types endpoint categories)',
+  })
+  @IsEnum(TaskType)
+  category: TaskType;
 
   @ApiProperty({
     example: 'Create Instagram Post for Product Launch',
