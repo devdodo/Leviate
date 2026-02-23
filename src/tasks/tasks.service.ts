@@ -101,8 +101,8 @@ export class TasksService {
     return {
       message: 'Task types retrieved successfully',
       data: {
-        taskTypes,
-        categories,
+        categories: taskTypes,
+        taskTypes: categories,
         contentTypes,
         scheduleTypes,
       },
