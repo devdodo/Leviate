@@ -89,12 +89,18 @@ export class TasksService {
       { value: ContentType.IMAGE, label: 'Image' },
     ];
 
+    const scheduleTypes = [
+      { value: 'FIXED', label: 'Fixed', description: 'Fixed campaign window; work happens within specific dates' },
+      { value: 'VARIABLE', label: 'Variable', description: 'Flexible schedule; work can be done across a wider timeframe' },
+    ];
+
     return {
       message: 'Task types retrieved successfully',
       data: {
         categories,
         taskTypes,
         contentTypes,
+        scheduleTypes,
       },
     };
   }
@@ -1294,8 +1300,8 @@ export class TasksService {
       throw new NotFoundException('User not found');
     }
 
-    const budgetAmount = Number(task.budget) || 0;
-    const platformFeePercentage = Number(task.platformFeePercentage) || 5;
+    const budgetAmount = Number(taskData.budget) || 0;
+    const platformFeePercentage = Number(taskData.platformFeePercentage) || 5;
     const platformFee = (budgetAmount * platformFeePercentage) / 100;
     const totalAmount = budgetAmount + platformFee;
 

@@ -133,7 +133,11 @@ export class CreateTaskDto {
   @Type(() => TargetingDto)
   targeting?: TargetingDto;
 
-  @ApiProperty({ enum: ScheduleType, example: ScheduleType.FIXED })
+  @ApiProperty({
+    enum: ScheduleType,
+    example: ScheduleType.FIXED,
+    description: 'FIXED: Work within specific dates. VARIABLE: Flexible schedule across a wider timeframe.',
+  })
   @IsEnum(ScheduleType)
   scheduleType: ScheduleType;
 
