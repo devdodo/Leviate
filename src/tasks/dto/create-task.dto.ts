@@ -9,6 +9,7 @@ import {
   IsDateString,
   IsObject,
   ValidateNested,
+  IsUrl,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ScheduleType } from '@prisma/client';
@@ -38,38 +39,22 @@ type ContentType = typeof ContentType[keyof typeof ContentType];
 export class TargetingDto {
   @ApiProperty({
     required: false,
-    example: ['Tech', 'Fashion', 'Music'],
-    description: 'Array of interest tags',
+    example: '18-35, fitness enthusiasts',
+    description: 'Target audience description (e.g., age range and interests)',
+  })
+  @IsOptional()
+  @IsString()
+  targetAudience?: string;
+
+  @ApiProperty({
+    required: false,
+    example: ['Lagos', 'Abuja', 'Port Harcourt'],
+    description: 'Array of target locations',
   })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  interests?: string[];
-
-  @ApiProperty({
-    required: false,
-    example: ['18-24', '25-34'],
-    description: 'Age group ranges: 13-17, 18-24, 25-34, 35-44, 45-54, 55+',
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  ageGroup?: string[];
-
-  @ApiProperty({
-    required: false,
-    example: 'All',
-    enum: ['All', 'Male', 'Female', 'Other'],
-    description: 'Gender targeting',
-  })
-  @IsOptional()
-  @IsString()
-  gender?: string;
-
-  @ApiProperty({ required: false, example: 'Lagos, Nigeria' })
-  @IsOptional()
-  @IsString()
-  location?: string;
+  locations?: string[];
 
   @ApiProperty({ required: false, example: 'English' })
   @IsOptional()
@@ -111,12 +96,21 @@ export class CreateTaskDto {
   description?: string;
 
   @ApiProperty({
-    example: ['instagram', 'twitter', 'facebook'],
-    description: 'Platforms: instagram, twitter, facebook, youtube, tiktok, linkedin',
+    example: 'instagram',
+    description: 'Platform: instagram, twitter, facebook, youtube, tiktok, linkedin',
   })
-  @IsArray()
-  @IsString({ each: true })
-  platforms: string[];
+  @IsString()
+  platform: string;
+
+  @ApiProperty({
+    required: false,
+    example: 'https://instagram.com/p/example',
+    description:
+      'Resource link (post URL, account URL). Not used for MAKE_POST — contributors submit their post link as evidence for admin verification.',
+  })
+  @IsOptional()
+  @IsString()
+  resourceLink?: string;
 
   @ApiProperty({
     required: false,
@@ -127,15 +121,6 @@ export class CreateTaskDto {
   @IsOptional()
   @IsEnum(ContentType)
   contentType?: ContentType;
-
-  @ApiProperty({
-    required: false,
-    example: 'https://example.com/post/123',
-    description: 'Link or Sample Post (optional)',
-  })
-  @IsOptional()
-  @IsString()
-  resourceLink?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

@@ -318,5 +318,206 @@ This is a template brief. Configure AI service for AI-generated briefs.`;
 
     return { brief, llmContext };
   }
+
+  /**
+   * Generate a compelling task summary/ad copy for prospective contributors
+   * This will be displayed to attract contributors to apply for the task
+   */
+  async generateTaskSummaryForContributors(taskData: {
+    title: string;
+    description?: string;
+    platforms: Array<{ name: string; resourceLink?: string }> | string[];
+    category: string;
+    contentType?: string;
+    budget: number;
+    targeting?: {
+      targetAudience?: string;
+      locations?: string[];
+      language?: string;
+    };
+    scheduleStart: Date | string;
+    scheduleEnd?: Date | string;
+    commentsInstructions?: string;
+    hashtags?: string[];
+    buzzwords?: string[];
+  }): Promise<string> {
+    if (!this.openaiApiKey && !this.anthropicApiKey) {
+      this.logger.warn('No AI API key configured. Returning template summary.');
+      return this.generateTemplateSummary(taskData);
+    }
+
+    try {
+      const prompt = this.buildSummaryPrompt(taskData);
+
+      if (this.openaiApiKey) {
+        return await this.generateSummaryWithOpenAI(prompt);
+      } else if (this.anthropicApiKey) {
+        return await this.generateSummaryWithAnthropic(prompt);
+      }
+    } catch (error) {
+      this.logger.error(`AI summary generation failed: ${error.message}`, error.stack);
+      // Fallback to template
+      return this.generateTemplateSummary(taskData);
+    }
+
+    return this.generateTemplateSummary(taskData);
+  }
+
+  private async generateSummaryWithOpenAI(prompt: string): Promise<string> {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.openaiModel,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are an expert copywriter specializing in creating compelling, engaging task descriptions for social media influencers and content creators. Your goal is to write attractive, clear summaries that motivate contributors to apply for tasks. Write in a friendly, professional tone that highlights opportunities and benefits.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.8,
+        max_tokens: 500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content?.trim() || '';
+  }
+
+  private async generateSummaryWithAnthropic(prompt: string): Promise<string> {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.anthropicApiKey!,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: this.anthropicModel,
+        max_tokens: 500,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.content[0]?.text?.trim() || '';
+  }
+
+  private buildSummaryPrompt(taskData: any): string {
+    // Extract platform names if it's an array of objects
+    const platformNames =
+      taskData.platforms && taskData.platforms.length > 0
+        ? taskData.platforms.map((p: any) => (typeof p === 'string' ? p : p.name)).join(', ')
+        : 'Multiple platforms';
+
+    // Format dates
+    const startDate = taskData.scheduleStart
+      ? new Date(taskData.scheduleStart).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : 'TBD';
+    const endDate = taskData.scheduleEnd
+      ? new Date(taskData.scheduleEnd).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : 'Ongoing';
+
+    // Format budget
+    const budget = new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+      minimumFractionDigits: 0,
+    }).format(taskData.budget);
+
+    // Build targeting info
+    const targetingInfo = [];
+    if (taskData.targeting?.targetAudience) {
+      targetingInfo.push(`Target Audience: ${taskData.targeting.targetAudience}`);
+    }
+    if (taskData.targeting?.locations && taskData.targeting.locations.length > 0) {
+      targetingInfo.push(`Locations: ${taskData.targeting.locations.join(', ')}`);
+    }
+    if (taskData.targeting?.language) {
+      targetingInfo.push(`Language: ${taskData.targeting.language}`);
+    }
+
+    return `Create a compelling, engaging task summary (2-3 sentences) that will attract social media content creators to apply for this task. Make it exciting and highlight the opportunity.
+
+Task Details:
+- Title: ${taskData.title}
+- Description: ${taskData.description || 'Not provided'}
+- Category: ${taskData.category}
+- Content Type: ${taskData.contentType || 'Any'}
+- Platforms: ${platformNames}
+- Budget: ${budget}
+${targetingInfo.length > 0 ? `- ${targetingInfo.join('\n- ')}` : ''}
+- Campaign Period: ${startDate} to ${endDate}
+${taskData.commentsInstructions ? `- Special Instructions: ${taskData.commentsInstructions}` : ''}
+${taskData.hashtags && taskData.hashtags.length > 0 ? `- Hashtags: ${taskData.hashtags.join(', ')}` : ''}
+${taskData.buzzwords && taskData.buzzwords.length > 0 ? `- Keywords: ${taskData.buzzwords.join(', ')}` : ''}
+
+Requirements:
+1. Write in a friendly, professional, and engaging tone
+2. Highlight the opportunity and benefits for contributors
+3. Mention the budget and platforms clearly
+4. If target audience or locations are specified, incorporate them naturally
+5. Keep it concise (2-3 sentences, max 200 words)
+6. Make it exciting and action-oriented
+7. Focus on what contributors will gain from this opportunity
+
+Generate the summary now:`;
+  }
+
+  private generateTemplateSummary(taskData: any): string {
+    const platformNames =
+      taskData.platforms && taskData.platforms.length > 0
+        ? taskData.platforms.map((p: any) => (typeof p === 'string' ? p : p.name)).join(', ')
+        : 'Multiple platforms';
+
+    const budget = new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+      minimumFractionDigits: 0,
+    }).format(taskData.budget);
+
+    let summary = `Join us for an exciting ${taskData.category} opportunity on ${platformNames}! `;
+    summary += `Earn ${budget} by creating engaging content. `;
+
+    if (taskData.targeting?.targetAudience) {
+      summary += `Perfect for ${taskData.targeting.targetAudience}. `;
+    }
+
+    if (taskData.targeting?.locations && taskData.targeting.locations.length > 0) {
+      summary += `Open to contributors in ${taskData.targeting.locations.join(', ')}. `;
+    }
+
+    summary += `Apply now and be part of this amazing campaign!`;
+
+    return summary;
+  }
 }
 

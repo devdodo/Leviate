@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -47,19 +47,55 @@ export class SubmissionsController {
 
   @Post(':id/verify')
   @UseGuards(RolesGuard)
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'Override verification (Admin only)' })
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Verify submission as complete (Admin only)' })
   @ApiResponse({
     status: 200,
-    description: 'Verification overridden successfully',
+    description: 'Submission verified successfully',
     type: BaseResponseDto,
   })
-  async overrideVerification(
+  async verifySubmission(
     @CurrentUser() user: any,
     @Param('id') id: string,
-    @Body() body: { verified: boolean },
+    @Body() body: { comment?: string },
   ) {
-    return this.submissionsService.overrideVerification(id, body.verified, user.id);
+    return this.submissionsService.verifySubmission(id, user.id, body.comment);
+  }
+
+  @Post(':id/reject')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Reject submission with feedback (Admin only)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Submission rejected successfully',
+    type: BaseResponseDto,
+  })
+  async rejectSubmission(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: { comment: string },
+  ) {
+    return this.submissionsService.rejectSubmission(id, user.id, body.comment);
+  }
+
+  @Get('pending/review')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Get all pending submissions for admin review' })
+  @ApiResponse({
+    status: 200,
+    description: 'Pending submissions retrieved successfully',
+    type: BaseResponseDto,
+  })
+  async getPendingSubmissions(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.submissionsService.getPendingSubmissions(
+      page ? parseInt(page) : 1,
+      limit ? parseInt(limit) : 20,
+    );
   }
 }
 

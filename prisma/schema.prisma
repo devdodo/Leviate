@@ -62,6 +62,13 @@ enum TaskStatus {
   EXPIRED
 }
 
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
 enum ApplicationStatus {
   PENDING
   APPROVED
@@ -168,6 +175,7 @@ model User {
   adminActions          AdminAction[]
   bankAccounts          BankAccount[]
   withdrawalOtps        WithdrawalOtp[]
+  verifiedSubmissions   TaskSubmission[] @relation("SubmissionVerifier")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -222,6 +230,13 @@ model Task {
   platformFeePercentage Decimal      @default(5) @map("platform_fee_percentage") @db.Decimal(5, 2)
   aiGeneratedBrief      String?      @map("ai_generated_brief") @db.Text
   llmContextFile        String?      @map("llm_context_file") @db.Text // LLM.txt content
+  contributorSummary    String?      @map("contributor_summary") @db.Text // AI-generated summary for prospective contributors
+  
+  // Payment fields
+  paymentStatus         PaymentStatus @default(PENDING) @map("payment_status")
+  paymentReference     String?       @unique @map("payment_reference") @db.VarChar(100)
+  paymentAuthorizationUrl String?     @map("payment_authorization_url") @db.Text
+  paymentVerifiedAt     DateTime?     @map("payment_verified_at") @db.Timestamptz(6)
   
   // Legacy fields (kept for backward compatibility)
   goals                 Json? // Deprecated: use category instead
@@ -279,6 +294,10 @@ model TaskSubmission {
   verificationStatus  VerificationStatus @default(PENDING) @map("verification_status")
   aiVerificationScore Decimal?           @map("ai_verification_score") @db.Decimal(5, 2) // 0-100
   verifiedAt          DateTime?          @map("verified_at") @db.Timestamptz(6)
+  verifiedById        String?            @map("verified_by_id") // Admin who verified
+  verifiedBy          User?              @relation("SubmissionVerifier", fields: [verifiedById], references: [id])
+  adminComment        String?            @map("admin_comment") @db.Text // Admin feedback/rejection reason
+  rejectedAt          DateTime?          @map("rejected_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -286,6 +305,7 @@ model TaskSubmission {
   @@index([taskerId])
   @@index([verificationStatus])
   @@index([taskId])
+  @@index([verifiedById])
   @@map("task_submissions")
 }
 

@@ -80,13 +80,41 @@ export class SubmissionsService {
       },
     });
 
-    // Create notification for creator
+    // Create notification for admin (submission pending review)
+    // Get all admins
+    const admins = await this.prisma.user.findMany({
+      where: {
+        role: { in: ['ADMIN', 'SUPERADMIN'] as any },
+        status: 'ACTIVE',
+      },
+    });
+
+    // Notify all admins about pending submission
+    await Promise.all(
+      admins.map((admin) =>
+        this.prisma.notification.create({
+          data: {
+            receiverId: admin.id,
+            type: 'SUBMISSION_VERIFIED', // Reuse type, but it's actually pending
+            title: 'New Task Submission Pending Review',
+            message: `A new submission requires admin review for task: ${application.task.title}`,
+            data: {
+              taskId,
+              submissionId: submission.id,
+              applicationId,
+            },
+          },
+        }),
+      ),
+    );
+
+    // Also notify creator
     await this.prisma.notification.create({
       data: {
         receiverId: application.task.creatorId,
         type: 'SUBMISSION_VERIFIED',
         title: 'New Task Submission',
-        message: `A submission has been made for task: ${application.task.title}`,
+        message: `A submission has been made for task: ${application.task.title}. Awaiting admin verification.`,
         data: {
           taskId,
           submissionId: submission.id,
@@ -94,22 +122,129 @@ export class SubmissionsService {
       },
     });
 
-    // Trigger AI verification (async, will be processed by background job)
-    // For now, we'll mark as verifying
+    return {
+      message: 'Submission created successfully. Awaiting admin verification.',
+      data: submission,
+    };
+  }
+
+  async getPendingSubmissions(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [submissions, total] = await Promise.all([
+      this.prisma.taskSubmission.findMany({
+        where: {
+          verificationStatus: { in: [VerificationStatus.PENDING, VerificationStatus.VERIFYING] },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          task: {
+            select: { id: true, title: true, creatorId: true },
+          },
+          application: {
+            include: {
+              tasker: {
+                select: { id: true, email: true, reputationScore: true },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.taskSubmission.count({
+        where: {
+          verificationStatus: { in: [VerificationStatus.PENDING, VerificationStatus.VERIFYING] },
+        },
+      }),
+    ]);
+
+    return {
+      message: 'Pending submissions retrieved successfully',
+      data: submissions,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async verifySubmission(id: string, adminUserId: string, comment?: string) {
+    const submission = await this.prisma.taskSubmission.findUnique({
+      where: { id },
+      include: { task: true },
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Submission not found');
+    }
+
     await this.prisma.taskSubmission.update({
-      where: { id: submission.id },
+      where: { id },
       data: {
-        verificationStatus: VerificationStatus.VERIFYING,
+        verificationStatus: VerificationStatus.VERIFIED,
+        verifiedAt: new Date(),
       },
     });
 
-    // Queue verification job (would be handled by BullMQ in production)
-    // For MVP, we'll do a simple verification
-    this.verifySubmissionAsync(submission.id, taskId);
+    await this.prisma.adminAction.create({
+      data: {
+        adminId: adminUserId,
+        actionType: 'OVERRIDE_VERIFICATION',
+        targetTaskId: submission.taskId,
+        reason: comment ?? 'Submission verified by admin',
+      },
+    });
+
+    await this.processPayout(submission);
 
     return {
-      message: 'Submission created successfully. Verification in progress.',
-      data: submission,
+      message: 'Submission verified successfully',
+      data: { submissionId: id, status: VerificationStatus.VERIFIED },
+    };
+  }
+
+  async rejectSubmission(id: string, adminUserId: string, comment: string) {
+    const submission = await this.prisma.taskSubmission.findUnique({
+      where: { id },
+      include: { task: true },
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Submission not found');
+    }
+
+    await this.prisma.taskSubmission.update({
+      where: { id },
+      data: {
+        verificationStatus: VerificationStatus.REJECTED,
+      },
+    });
+
+    await this.prisma.adminAction.create({
+      data: {
+        adminId: adminUserId,
+        actionType: 'RESOLVE_DISPUTE', // Closest match; consider adding REJECT_SUBMISSION to enum
+        targetTaskId: submission.taskId,
+        reason: comment,
+      },
+    });
+
+    await this.prisma.notification.create({
+      data: {
+        receiverId: submission.taskerId,
+        type: 'SUBMISSION_REJECTED',
+        title: 'Submission Rejected',
+        message: `Your submission for task "${submission.task.title}" was rejected. ${comment}`,
+        data: { taskId: submission.taskId, submissionId: id },
+      },
+    });
+
+    return {
+      message: 'Submission rejected successfully',
+      data: { submissionId: id, status: VerificationStatus.REJECTED },
     };
   }
 
@@ -249,8 +384,15 @@ export class SubmissionsService {
 
     if (!task) return;
 
-    const payoutAmount = Number(task.budgetPerTask);
-    const platformFee = Math.floor(payoutAmount * 0.05); // 5% platform fee
+    // Use the new budget field (single budget amount)
+    const taskData = task as any;
+    const totalBudget = Number(taskData.budget || 0);
+    
+    // For SINGLE tasks, the full budget goes to one contributor
+    // For MULTI tasks, budget is split (for now, we'll use full amount - can be enhanced)
+    const payoutAmount = totalBudget;
+    const platformFeePercentage = Number(task.platformFeePercentage || 5);
+    const platformFee = (payoutAmount * platformFeePercentage) / 100;
     const taskerAmount = payoutAmount - platformFee;
 
     // Credit tasker wallet
@@ -259,7 +401,7 @@ export class SubmissionsService {
       taskerAmount,
       'TASK_PAYOUT',
       `Payout for task: ${task.title}`,
-      { taskId: task.id, submissionId: submission.id },
+      { referenceId: submission.id, taskId: task.id, submissionId: submission.id },
     );
 
     // Increase reputation
