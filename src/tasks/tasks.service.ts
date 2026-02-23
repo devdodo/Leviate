@@ -60,21 +60,25 @@ export class TasksService {
         value: TaskCategory.LIKE_SHARE_SAVE_REPOST,
         label: 'Engagement (Likes, Repost, Retweet)',
         description: 'Get likes, reposts, shares, or saves on your content',
+        amount: 1000,
       },
       {
         value: TaskCategory.COMMENT_POST,
         label: 'Comments',
         description: 'Get comments on your post',
+        amount: 2000,
       },
       {
         value: TaskCategory.MAKE_POST,
         label: 'Create Post',
         description: 'Have contributors create and publish a post',
+        amount: 5000,
       },
       {
         value: TaskCategory.FOLLOW_ACCOUNT,
         label: 'Follow',
         description: 'Get contributors to follow your account',
+        amount: 1000,
       },
     ];
 
