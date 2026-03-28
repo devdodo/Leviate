@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   BadRequestException,
   ConflictException,
@@ -21,6 +22,8 @@ import type { StringValue } from 'ms';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
@@ -98,14 +101,20 @@ export class AuthService {
       });
     }
 
-    // Send OTP email via Zeptomail
-    await this.emailService.sendOTP(email, verificationCode);
+    // Send OTP email (skip if email service has no credit - return code in response for now)
+    try {
+      await this.emailService.sendOTP(email, verificationCode);
+    } catch (error) {
+      this.logger.warn(`Email send failed (returning code in response): ${error.message}`);
+    }
 
     return {
-      message: 'Signup successful. Please check your email for the verification code.',
+      message: 'Signup successful. Use the verification code below to verify your email.',
       data: {
         userId: user.id,
         email: user.email,
+        verificationCode,
+        verificationCodeExpiresAt,
       },
     };
   }
@@ -144,14 +153,19 @@ export class AuthService {
       },
     });
 
-    // Send OTP email via Zeptomail
-    await this.emailService.sendOTP(email, verificationCode);
+    // Send OTP email (skip if email service has no credit - return code in response for now)
+    try {
+      await this.emailService.sendOTP(email, verificationCode);
+    } catch (error) {
+      this.logger.warn(`Email send failed (returning code in response): ${error.message}`);
+    }
 
     return {
-      message: 'Verification code has been resent. Please check your email.',
+      message: 'Verification code has been resent. Use the code below to verify your email.',
       data: {
         email: user.email,
-        ...(process.env.NODE_ENV === 'development' && { verificationCode }),
+        verificationCode,
+        verificationCodeExpiresAt,
       },
     };
   }

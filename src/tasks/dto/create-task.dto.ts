@@ -66,18 +66,20 @@ export class CreateTaskDto {
   @ApiProperty({
     enum: TaskCategory,
     example: TaskCategory.MAKE_POST,
-    description: 'Task type: MAKE_POST, COMMENT_POST, LIKE_SHARE_SAVE_REPOST, FOLLOW_ACCOUNT (from task-types endpoint taskTypes)',
+    description:
+      'Task category: MAKE_POST, COMMENT_POST, LIKE_SHARE_SAVE_REPOST, FOLLOW_ACCOUNT (from GET /tasks/task-types categories)',
   })
   @IsEnum(TaskCategory)
-  taskType: TaskCategory;
+  category: TaskCategory;
 
   @ApiProperty({
     enum: TaskType,
     example: TaskType.SINGLE,
-    description: 'Category: SINGLE (one-time) or MULTI (multiple engagements) (from task-types endpoint categories)',
+    description:
+      'SINGLE (one-time) or MULTI (multiple engagements per contributor) (from GET /tasks/task-types taskTypes)',
   })
   @IsEnum(TaskType)
-  category: TaskType;
+  taskType: TaskType;
 
   @ApiProperty({
     example: 'Create Instagram Post for Product Launch',

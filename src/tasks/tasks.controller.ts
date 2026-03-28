@@ -39,7 +39,8 @@ export class TasksController {
   @ApiOperation({ summary: 'Get available task types and categories for task creation' })
   @ApiResponse({
     status: 200,
-    description: 'Task types retrieved successfully. Returns categories (likes/repost/retweet, comments, create post, follow), task types (single/multi), and content types.',
+    description:
+      'Task types retrieved successfully. Returns `categories` (MAKE_POST, COMMENT_POST, etc.), `taskTypes` (SINGLE, MULTI), content types, and schedule types.',
     type: BaseResponseDto,
   })
   async getTaskTypes() {

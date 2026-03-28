@@ -101,8 +101,8 @@ export class TasksService {
     return {
       message: 'Task types retrieved successfully',
       data: {
-        categories: taskTypes,
-        taskTypes: categories,
+        categories,
+        taskTypes,
         contentTypes,
         scheduleTypes,
       },
@@ -139,7 +139,7 @@ export class TasksService {
         title: createTaskDto.title,
         description: createTaskDto.description || '',
         platforms: [createTaskDto.platform],
-        category: createTaskDto.taskType,
+        category: createTaskDto.category,
         contentType: createTaskDto.contentType,
         targeting: (createTaskDto.targeting || {}) as any,
         commentsInstructions: createTaskDto.commentsInstructions || '',
@@ -160,13 +160,13 @@ export class TasksService {
     const task = await this.prisma.task.create({
       data: {
         creatorId: userId,
-        taskType: createTaskDto.category,
-        category: createTaskDto.taskType,
+        taskType: createTaskDto.taskType,
+        category: createTaskDto.category,
         title: createTaskDto.title,
         description: createTaskDto.description,
         platforms: [createTaskDto.platform],
         contentType: createTaskDto.contentType,
-        resourceLink: createTaskDto.taskType === 'MAKE_POST' ? null : createTaskDto.resourceLink,
+        resourceLink: createTaskDto.category === 'MAKE_POST' ? null : createTaskDto.resourceLink,
         audiencePreferences: createTaskDto.audiencePreferences || {},
         targeting: (createTaskDto.targeting || {}) as any,
         scheduleType: createTaskDto.scheduleType,
@@ -831,12 +831,12 @@ export class TasksService {
     if (updateTaskDto.title) updateData.title = updateTaskDto.title;
     if (updateTaskDto.description) updateData.description = updateTaskDto.description;
     if (updateTaskDto.platform) updateData.platforms = [updateTaskDto.platform];
-    if (updateTaskDto.taskType) updateData.category = updateTaskDto.taskType;
-    if (updateTaskDto.category) updateData.taskType = updateTaskDto.category;
+    if (updateTaskDto.category) updateData.category = updateTaskDto.category;
+    if (updateTaskDto.taskType) updateData.taskType = updateTaskDto.taskType;
     if (updateTaskDto.contentType) updateData.contentType = updateTaskDto.contentType;
     if (updateTaskDto.resourceLink !== undefined) {
-      const taskTypeForResource = updateTaskDto.taskType ?? (task as any).category;
-      updateData.resourceLink = taskTypeForResource === 'MAKE_POST' ? null : updateTaskDto.resourceLink;
+      const taskCategoryForResource = updateTaskDto.category ?? (task as any).category;
+      updateData.resourceLink = taskCategoryForResource === 'MAKE_POST' ? null : updateTaskDto.resourceLink;
     }
     if (updateTaskDto.budget) updateData.budget = updateTaskDto.budget;
     if (updateTaskDto.targeting) updateData.targeting = updateTaskDto.targeting as any;
@@ -1083,7 +1083,7 @@ export class TasksService {
           title: createTaskDto.title,
           description: createTaskDto.description || '',
           platforms: [createTaskDto.platform],
-          category: createTaskDto.taskType,
+          category: createTaskDto.category,
           contentType: createTaskDto.contentType,
           targeting: (createTaskDto.targeting || {}) as any,
           commentsInstructions: createTaskDto.commentsInstructions || '',
@@ -1231,8 +1231,8 @@ export class TasksService {
     const summary = {
       id: task.id,
       status: task.status,
-      taskType: taskData.category,
-      category: taskData.taskType,
+      taskType: taskData.taskType,
+      category: taskData.category,
       title: task.title,
       description: task.description,
       platform: platform || null,
