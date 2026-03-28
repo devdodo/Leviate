@@ -76,9 +76,32 @@ export class PaystackService {
   private readonly baseUrl = 'https://api.paystack.co';
 
   constructor(private configService: ConfigService) {
-    this.secretKey = this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
+    const raw = this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
+    this.secretKey = PaystackService.normalizeSecretKey(raw);
     if (!this.secretKey) {
       this.logger.warn('PAYSTACK_SECRET_KEY not set. Paystack operations will fail.');
+    }
+  }
+
+  /** Trim, strip wrapping quotes, remove accidental "Bearer " prefix. */
+  private static normalizeSecretKey(raw: string): string {
+    let k = raw.trim().replace(/^["']|["']$/g, '');
+    if (k.toLowerCase().startsWith('bearer ')) {
+      k = k.slice(7).trim();
+    }
+    return k;
+  }
+
+  private assertSecretConfigured(): void {
+    if (!this.secretKey) {
+      throw new BadRequestException(
+        'Payment provider is not configured. Set PAYSTACK_SECRET_KEY to your secret key (starts with sk_test_ or sk_live_).',
+      );
+    }
+    if (!this.secretKey.startsWith('sk_')) {
+      throw new BadRequestException(
+        'Invalid PAYSTACK_SECRET_KEY. Use the secret key from your Paystack dashboard (starts with sk_test_ or sk_live_).',
+      );
     }
   }
 
@@ -87,6 +110,7 @@ export class PaystackService {
     method: 'GET' | 'POST' = 'GET',
     body?: any,
   ): Promise<T> {
+    this.assertSecretConfigured();
     const url = `${this.baseUrl}${endpoint}`;
     const headers: HeadersInit = {
       Authorization: `Bearer ${this.secretKey}`,

@@ -133,7 +133,6 @@ export class TasksService {
     // Generate AI brief at creation so users can preview before publishing
     let brief = '';
     let llmContext = '';
-    let contributorSummary = '';
     try {
       const aiResult = await this.aiService.generateTaskBrief({
         title: createTaskDto.title,
@@ -148,15 +147,13 @@ export class TasksService {
       });
       brief = aiResult.brief;
       llmContext = aiResult.llmContext;
-      contributorSummary = brief;
     } catch (error) {
       this.logger.error(`Failed to generate AI brief: ${error.message}`);
       brief = createTaskDto.description || createTaskDto.title;
       llmContext = `Task: ${createTaskDto.title}\n${createTaskDto.description || ''}`;
-      contributorSummary = brief;
     }
 
-    // Create task as draft only. Payment is required before publishing.
+    // Draft only — payment is checked in publishTask(), not here.
     const task = await this.prisma.task.create({
       data: {
         creatorId: userId,
@@ -165,6 +162,7 @@ export class TasksService {
         title: createTaskDto.title,
         description: createTaskDto.description,
         platforms: [createTaskDto.platform],
+        goals: [],
         contentType: createTaskDto.contentType,
         resourceLink: createTaskDto.category === 'MAKE_POST' ? null : createTaskDto.resourceLink,
         audiencePreferences: createTaskDto.audiencePreferences || {},
@@ -178,12 +176,13 @@ export class TasksService {
         hashtags: createTaskDto.hashtags || [],
         buzzwords: createTaskDto.buzzwords || [],
         budget: createTaskDto.budget,
+        budgetPerTask: createTaskDto.budget,
+        totalBudget: createTaskDto.budget,
         status,
         aiGeneratedBrief: brief,
         llmContextFile: llmContext,
-        contributorSummary: contributorSummary || null,
-        paymentStatus: 'PENDING' as any,
-      } as any,
+        paymentStatus: 'PENDING',
+      },
     });
 
     return {
@@ -1095,8 +1094,7 @@ export class TasksService {
           data: {
             aiGeneratedBrief: aiResult.brief,
             llmContextFile: aiResult.llmContext,
-            contributorSummary: aiResult.brief,
-          } as any,
+          },
         });
       } catch (error) {
         this.logger.error(`Failed to regenerate AI brief on save: ${error.message}`);
@@ -1136,13 +1134,13 @@ export class TasksService {
       throw new BadRequestException('Cannot publish a completed task');
     }
 
-    // Check payment status
+    // Payment gate: only publishing requires PAID (create/update draft does not).
     const taskData = task as any;
     const paymentStatus = taskData.paymentStatus || 'PENDING';
 
     if (paymentStatus !== 'PAID') {
       throw new BadRequestException(
-        'Payment required before publishing. Call POST /tasks/:id/initiate-payment to get the payment URL, complete payment, then publish.',
+        'Payment required before publishing. Use initiate-payment, complete payment, then call publish again.',
       );
     }
 

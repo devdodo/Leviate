@@ -46,8 +46,17 @@ export class AIService {
         return await this.generateWithAnthropic(prompt, taskData);
       }
     } catch (error) {
-      this.logger.error(`AI brief generation failed: ${error.message}`, error.stack);
-      // Fallback to template
+      const msg = error instanceof Error ? error.message : String(error);
+      const isAuthOrQuota =
+        /API error:\s*(401|403|429)/.test(msg) ||
+        /invalid_api_key|incorrect api key/i.test(msg);
+      if (isAuthOrQuota) {
+        this.logger.warn(
+          `AI provider unavailable (${msg.slice(0, 120)}); using template brief.`,
+        );
+      } else {
+        this.logger.error(`AI brief generation failed: ${msg}`, error.stack);
+      }
       return this.generateTemplateBrief(taskData);
     }
 
@@ -235,13 +244,53 @@ export class AIService {
     };
   }
 
+  /** Task create sends `platforms` as string[] and `category` instead of legacy `goals`. */
+  private normalizePlatformList(taskData: any): string[] {
+    const p = taskData?.platforms;
+    if (p == null) return [];
+    const arr = Array.isArray(p) ? p : [p];
+    return arr
+      .map((x: any) => (typeof x === 'string' ? x : x?.name))
+      .filter(Boolean);
+  }
+
+  private formatPlatformsLine(taskData: any): string {
+    const list = this.normalizePlatformList(taskData);
+    return list.length > 0 ? list.join(', ') : 'N/A';
+  }
+
+  private formatGoalsLine(taskData: any): string {
+    if (Array.isArray(taskData.goals) && taskData.goals.length > 0) {
+      return taskData.goals.join(', ');
+    }
+    if (taskData.category) return String(taskData.category);
+    return 'N/A';
+  }
+
+  private platformLines(taskData: any): string {
+    const list = this.normalizePlatformList(taskData);
+    return list.length > 0
+      ? list.map((p: string) => `- ${p}`).join('\n')
+      : '- N/A';
+  }
+
+  private goalLines(taskData: any): string {
+    if (Array.isArray(taskData.goals) && taskData.goals.length > 0) {
+      return taskData.goals.map((g: string) => `- ${g}`).join('\n');
+    }
+    if (taskData.category) return `- ${taskData.category}`;
+    return '- N/A';
+  }
+
   private buildBriefPrompt(taskData: any): string {
+    const platformStr = this.formatPlatformsLine(taskData);
+    const goalsStr = this.formatGoalsLine(taskData);
     return `Generate a comprehensive task brief for the following task:
 
 Title: ${taskData.title}
 Description: ${taskData.description || 'N/A'}
-Platforms: ${taskData.platforms.join(', ')}
-Goals: ${taskData.goals.join(', ')}
+Platforms: ${platformStr}
+Goals: ${goalsStr}
 Targeting: ${JSON.stringify(taskData.targeting || {})}
 Instructions: ${taskData.commentsInstructions || 'N/A'}
 Hashtags: ${taskData.hashtags?.join(', ') || 'N/A'}
@@ -275,13 +324,15 @@ Respond with JSON: {"score": number (0-100), "reason": "brief explanation"}`;
   }
 
   private generateLLMContext(taskData: any, brief: string): string {
+    const platformLines = this.platformLines(taskData);
+    const goalLines = this.goalLines(taskData);
     return `# Task Brief: ${taskData.title}
 
 ## Platforms
-${taskData.platforms.map((p: string) => `- ${p}`).join('\n')}
+${platformLines}
 
 ## Goals
-${taskData.goals.map((g: string) => `- ${g}`).join('\n')}
+${goalLines}
 
 ## Targeting
 ${taskData.targeting ? JSON.stringify(taskData.targeting, null, 2) : 'N/A'}
@@ -305,8 +356,8 @@ The tasker should deliver work that matches the brief above, following all platf
   private generateTemplateBrief(taskData: any): { brief: string; llmContext: string } {
     const brief = `Task: ${taskData.title}
 
-Platforms: ${taskData.platforms.join(', ')}
-Goals: ${taskData.goals.join(', ')}
+Platforms: ${this.formatPlatformsLine(taskData)}
+Goals: ${this.formatGoalsLine(taskData)}
 
 ${taskData.description || ''}
 

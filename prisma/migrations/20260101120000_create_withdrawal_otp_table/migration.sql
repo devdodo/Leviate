@@ -16,32 +16,46 @@ CREATE INDEX IF NOT EXISTS "withdrawal_otps_user_id_idx" ON "withdrawal_otps"("u
 CREATE INDEX IF NOT EXISTS "withdrawal_otps_used_idx" ON "withdrawal_otps"("used");
 CREATE INDEX IF NOT EXISTS "withdrawal_otps_expires_at_idx" ON "withdrawal_otps"("expires_at");
 
--- Add foreign key constraint
-ALTER TABLE "withdrawal_otps" ADD CONSTRAINT "withdrawal_otps_user_id_fkey" 
-    FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Add foreign key constraint (idempotent — migration may have partially applied before)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'withdrawal_otps_user_id_fkey'
+    ) THEN
+        ALTER TABLE "withdrawal_otps" ADD CONSTRAINT "withdrawal_otps_user_id_fkey"
+            FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+END $$;
 
--- Migrate existing withdrawal OTP data from users table (if any)
-DO $$ 
+-- Migrate existing withdrawal OTP data from users table (if legacy columns still exist)
+DO $$
 DECLARE
     user_record RECORD;
 BEGIN
-    FOR user_record IN 
-        SELECT id, withdrawal_otp, withdrawal_otp_expires_at 
-        FROM users 
-        WHERE withdrawal_otp IS NOT NULL AND withdrawal_otp_expires_at IS NOT NULL
-    LOOP
-        INSERT INTO "withdrawal_otps" (id, user_id, otp, expires_at, used, created_at, updated_at)
-        VALUES (
-            gen_random_uuid()::text,
-            user_record.id,
-            user_record.withdrawal_otp,
-            user_record.withdrawal_otp_expires_at,
-            false,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )
-        ON CONFLICT DO NOTHING;
-    END LOOP;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'withdrawal_otp'
+    ) AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'withdrawal_otp_expires_at'
+    ) THEN
+        FOR user_record IN
+            SELECT id, withdrawal_otp, withdrawal_otp_expires_at
+            FROM users
+            WHERE withdrawal_otp IS NOT NULL AND withdrawal_otp_expires_at IS NOT NULL
+        LOOP
+            INSERT INTO "withdrawal_otps" (id, user_id, otp, expires_at, used, created_at, updated_at)
+            VALUES (
+                gen_random_uuid()::text,
+                user_record.id,
+                user_record.withdrawal_otp,
+                user_record.withdrawal_otp_expires_at,
+                false,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            );
+        END LOOP;
+    END IF;
 END $$;
 
 -- Remove withdrawal OTP columns from users table
