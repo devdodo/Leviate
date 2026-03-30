@@ -620,6 +620,7 @@ export class TasksService {
       status,
       platform,
       goal,
+      category,
       minBudget,
       maxBudget,
       search,
@@ -634,6 +635,10 @@ export class TasksService {
       // Public endpoint should only show published/active tasks
       status: TaskStatus.ACTIVE,
     };
+
+    if (category) {
+      where.category = category;
+    }
 
     // Platform filtering is performed in-memory after fetching since Prisma's JSON filtering
     // doesn't efficiently support nested object queries in JSON arrays
@@ -682,10 +687,13 @@ export class TasksService {
             select: {
               id: true,
               email: true,
+              reputationScore: true,
               profile: {
                 select: {
                   firstName: true,
                   lastName: true,
+                  city: true,
+                  state: true,
                 },
               },
             },
@@ -806,6 +814,278 @@ export class TasksService {
       message: 'Task retrieved successfully',
       data: task,
     };
+  }
+
+  /**
+   * Marketplace feed: ACTIVE tasks shaped for listing cards (public).
+   */
+  async getMarketplaceList(query: TaskQueryDto, userId?: string) {
+    const result = await this.getTasks(query, userId);
+    const tasks = (result.data.tasks as any[]).map((t) => this.toMarketplaceCard(t));
+    return {
+      message: 'Marketplace tasks retrieved successfully',
+      data: {
+        tasks,
+        pagination: result.data.pagination,
+      },
+    };
+  }
+
+  /**
+   * Marketplace job detail page: one ACTIVE task + client block + apply eligibility.
+   */
+  async getMarketplaceDetail(id: string, userId?: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id },
+      include: {
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            reputationScore: true,
+            createdAt: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+                city: true,
+                state: true,
+              },
+            },
+          },
+        },
+        _count: { select: { applications: true, submissions: true } },
+      },
+    });
+
+    if (!task || task.status !== TaskStatus.ACTIVE) {
+      throw new NotFoundException('Task not found');
+    }
+
+    const eligibility = await this.buildMarketplaceEligibility(userId, task);
+
+    return {
+      message: 'Task details retrieved successfully',
+      data: {
+        task: this.toMarketplaceDetail(task),
+        eligibility,
+      },
+    };
+  }
+
+  /**
+   * Similar jobs (same category), excluding the current task.
+   */
+  async getSimilarTasks(taskId: string, limit = 6) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+
+    const rows = await this.prisma.task.findMany({
+      where: {
+        id: { not: taskId },
+        status: TaskStatus.ACTIVE,
+        category: task.category,
+      },
+      take: Math.min(limit, 20),
+      orderBy: { createdAt: 'desc' },
+      include: {
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            reputationScore: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+                city: true,
+                state: true,
+              },
+            },
+          },
+        },
+        _count: { select: { applications: true, submissions: true } },
+      },
+    });
+
+    return {
+      message: 'Similar tasks retrieved successfully',
+      data: {
+        tasks: rows.map((t) => this.toMarketplaceCard(t)),
+      },
+    };
+  }
+
+  private async buildMarketplaceEligibility(
+    userId: string | undefined,
+    task: any,
+  ): Promise<{
+    canApply: boolean | null;
+    requiresAuth?: boolean;
+    reason?: string;
+  }> {
+    if (!userId) {
+      return { canApply: null, requiresAuth: true };
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true },
+    });
+
+    if (!user) {
+      return { canApply: null, requiresAuth: true };
+    }
+
+    if (user.userType !== ('CONTRIBUTOR' as UserType)) {
+      return { canApply: false, reason: 'Only contributor accounts can apply for tasks' };
+    }
+
+    const check = await this.userMeetsTaskRequirements(userId, task, user);
+    if (!check.meets) {
+      return { canApply: false, reason: check.reason };
+    }
+
+    const existing = await this.prisma.taskApplication.findFirst({
+      where: { taskId: task.id, taskerId: userId },
+    });
+    if (existing) {
+      return { canApply: false, reason: 'You have already applied to this task' };
+    }
+
+    return { canApply: true };
+  }
+
+  private toMarketplaceCard(task: any) {
+    const budget = Number(task.budget);
+    return {
+      id: task.id,
+      title: task.title,
+      descriptionPreview: this.previewText(task.description, 200),
+      postedAt: task.createdAt,
+      postedLabel: this.formatPostedLabel(task.createdAt),
+      category: task.category,
+      categoryLabel: this.categoryLabel(task.category),
+      taskType: task.taskType,
+      skills: this.extractSkills(task),
+      budget,
+      budgetLabel: this.formatBudgetLabel(task),
+      scheduleType: task.scheduleType,
+      paymentVerified: (task as any).paymentStatus === 'PAID',
+      platforms: task.platforms,
+      proposalCount: task._count?.applications ?? 0,
+      client: this.toMarketplaceClient(task.creator),
+    };
+  }
+
+  private toMarketplaceDetail(task: any) {
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      category: task.category,
+      categoryLabel: this.categoryLabel(task.category),
+      taskType: task.taskType,
+      contentType: task.contentType,
+      scheduleType: task.scheduleType,
+      scheduleStart: task.scheduleStart,
+      scheduleEnd: task.scheduleEnd,
+      budget: Number(task.budget),
+      budgetLabel: this.formatBudgetLabel(task),
+      paymentVerified: (task as any).paymentStatus === 'PAID',
+      platforms: task.platforms,
+      hashtags: task.hashtags,
+      buzzwords: task.buzzwords,
+      skills: this.extractSkills(task),
+      targeting: task.targeting,
+      commentsInstructions: task.commentsInstructions,
+      aiGeneratedBrief: task.aiGeneratedBrief,
+      contributorSummary: task.contributorSummary,
+      resourceLink: task.resourceLink,
+      createdAt: task.createdAt,
+      postedLabel: this.formatPostedLabel(task.createdAt),
+      proposalCount: task._count?.applications ?? 0,
+      client: this.toMarketplaceClient(task.creator),
+    };
+  }
+
+  private toMarketplaceClient(creator: any) {
+    if (!creator) {
+      return null;
+    }
+    const profile = creator.profile;
+    const displayName = profile?.firstName || profile?.lastName
+      ? [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim()
+      : (creator.email ? String(creator.email).split('@')[0] : 'Client');
+    return {
+      id: creator.id,
+      displayName,
+      rating: this.reputationToStars(creator.reputationScore ?? 75),
+      reviewCount: 0,
+      location:
+        profile?.city || profile?.state
+          ? [profile.city, profile.state].filter(Boolean).join(', ')
+          : null,
+      memberSince: creator.createdAt,
+    };
+  }
+
+  private reputationToStars(score: number): number {
+    const s = Math.max(0, Math.min(100, score));
+    return Math.round((s / 100) * 50) / 10;
+  }
+
+  private previewText(text: string | null | undefined, max: number): string {
+    if (!text) return '';
+    const t = text.trim();
+    if (t.length <= max) return t;
+    return `${t.slice(0, max - 1)}…`;
+  }
+
+  private formatPostedLabel(date: Date): string {
+    const d = new Date(date);
+    const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (sec < 60) return 'Posted just now';
+    if (sec < 3600) return `Posted ${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `Posted ${Math.floor(sec / 3600)}h ago`;
+    if (sec < 604800) return `Posted ${Math.floor(sec / 86400)}d ago`;
+    return `Posted ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }
+
+  private categoryLabel(category: string): string {
+    const labels: Record<string, string> = {
+      MAKE_POST: 'Create post',
+      COMMENT_POST: 'Comments',
+      LIKE_SHARE_SAVE_REPOST: 'Engagement',
+      FOLLOW_ACCOUNT: 'Follow account',
+    };
+    return labels[category] || category;
+  }
+
+  private extractSkills(task: any): string[] {
+    const tags: string[] = [];
+    if (Array.isArray(task.hashtags)) {
+      tags.push(...task.hashtags.map((x: any) => String(x)));
+    }
+    if (Array.isArray(task.buzzwords)) {
+      tags.push(...task.buzzwords.map((x: any) => String(x)));
+    }
+    return [...new Set(tags)].filter(Boolean).slice(0, 12);
+  }
+
+  private formatBudgetLabel(task: any): string {
+    const n = Number(task.budget);
+    const formatted = new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+      maximumFractionDigits: 0,
+    }).format(n);
+    if (task.scheduleType === 'FIXED') {
+      return `${formatted} · fixed budget`;
+    }
+    return `${formatted} · flexible schedule`;
   }
 
   async updateTask(userId: string, taskId: string, updateTaskDto: UpdateTaskDto) {

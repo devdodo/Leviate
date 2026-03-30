@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsString, IsEnum, IsNumber, Min, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
-import { TaskStatus, UserType } from '@prisma/client';
+import { TaskStatus, TaskCategory } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class TaskQueryDto extends PaginationDto {
@@ -9,6 +9,11 @@ export class TaskQueryDto extends PaginationDto {
   @IsOptional()
   @IsEnum(TaskStatus)
   status?: TaskStatus;
+
+  @ApiProperty({ required: false, enum: TaskCategory, description: 'Filter by task category (marketplace)' })
+  @IsOptional()
+  @IsEnum(TaskCategory)
+  category?: TaskCategory;
 
   @ApiProperty({ required: false, example: 'instagram' })
   @IsOptional()
