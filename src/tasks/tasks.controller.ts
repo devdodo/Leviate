@@ -193,6 +193,29 @@ export class TasksController {
     return this.tasksService.createTask(user.id, createTaskDto);
   }
 
+  @Post('direct-payment/verify')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify direct Paystack payment for a draft task',
+    description:
+      'Frontend calls this with the Paystack reference. Backend verifies status, amount, currency, metadata, and task ownership before marking the task as paid.',
+  })
+  @ApiBody({ schema: { type: 'object', properties: { reference: { type: 'string' } }, required: ['reference'] } })
+  @ApiResponse({
+    status: 200,
+    description: 'Direct payment verified successfully. Task can now be published.',
+    type: BaseResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Payment verification failed' })
+  async verifyDirectPayment(
+    @CurrentUser() user: any,
+    @Body() body: { reference: string },
+  ) {
+    return this.tasksService.verifyDirectPayment(user.id, body.reference);
+  }
+
   @Post('payment/verify')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -222,7 +245,8 @@ export class TasksController {
     description: 'Webhook processed successfully',
   })
   async handlePaymentWebhook(@Body() payload: any, @Req() req: any) {
-    return this.tasksService.handlePaymentWebhook(payload);
+    const signature = req.headers?.['x-paystack-signature'];
+    return this.tasksService.handlePaymentWebhook(payload, signature, req.rawBody);
   }
 
   @Put(':id')
@@ -271,6 +295,20 @@ export class TasksController {
   @ApiResponse({ status: 400, description: 'Task already paid or not a draft' })
   async initiatePayment(@CurrentUser() user: any, @Param('id') id: string) {
     return this.tasksService.initiatePayment(user.id, id);
+  }
+
+  @Post(':id/direct-payment/initiate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Initiate direct Paystack payment for a draft task' })
+  @ApiResponse({
+    status: 200,
+    description: 'Direct payment checkout data generated.',
+    type: BaseResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Task already paid or not a draft' })
+  async initiateDirectPayment(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.tasksService.initiateDirectPayment(user.id, id);
   }
 
   @Post(':id/save-draft')

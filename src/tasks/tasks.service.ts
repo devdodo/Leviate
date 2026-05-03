@@ -38,6 +38,8 @@ const ContentType = {
 } as const;
 type ContentType = typeof ContentType[keyof typeof ContentType];
 
+const DIRECT_TASK_PAYMENT_TYPE = 'TASK_DIRECT_PAYMENT';
+
 @Injectable()
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
@@ -1632,6 +1634,87 @@ export class TasksService {
     };
   }
 
+  async initiateDirectPayment(userId: string, taskId: string) {
+    const [task, user] = await Promise.all([
+      this.prisma.task.findUnique({
+        where: { id: taskId },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+      }),
+    ]);
+
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (task.creatorId !== userId) {
+      throw new ForbiddenException('You can only initiate payment for your own tasks');
+    }
+
+    if (user.userType !== UserType.CREATOR) {
+      throw new ForbiddenException('Only creators can pay for tasks');
+    }
+
+    if (!user.emailVerified) {
+      throw new BadRequestException('Please verify your email first');
+    }
+
+    const taskData = task as any;
+    if (taskData.paymentStatus === 'PAID') {
+      throw new BadRequestException('Task is already paid. You can publish directly.');
+    }
+
+    if (task.status !== TaskStatus.DRAFT) {
+      throw new BadRequestException('Only draft tasks can be paid. Task must be in draft status.');
+    }
+
+    const breakdown = this.getTaskPaymentBreakdown(task);
+    const paymentReference = `TASKDIRECT-${Date.now()}-${taskId.substring(0, 8)}`;
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3001';
+    const callbackUrl = `${frontendUrl}/tasks/payment/callback`;
+
+    const paymentResponse = await this.paystackService.initializePayment({
+      email: user.email,
+      amount: breakdown.total,
+      reference: paymentReference,
+      callback_url: callbackUrl,
+      metadata: {
+        taskId,
+        userId,
+        type: DIRECT_TASK_PAYMENT_TYPE,
+      },
+    });
+
+    const paymentUrl = paymentResponse.data.authorization_url;
+
+    await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        paymentReference,
+        paymentAuthorizationUrl: paymentUrl,
+        paymentStatus: 'PENDING' as any,
+      } as any,
+    });
+
+    return {
+      message:
+        'Direct payment initiated. Complete Paystack checkout, then call POST /tasks/direct-payment/verify with the reference.',
+      data: {
+        reference: paymentReference,
+        amountInKobo: this.toKobo(breakdown.total),
+        amount: breakdown.total,
+        email: user.email,
+        authorizationUrl: paymentUrl,
+        breakdown,
+      },
+    };
+  }
+
   async verifyPayment(reference: string) {
     try {
       const verification = await this.paystackService.verifyPayment(reference);
@@ -1692,8 +1775,112 @@ export class TasksService {
     }
   }
 
-  async handlePaymentWebhook(payload: any) {
+  async verifyDirectPayment(userId: string, reference: string) {
+    if (!reference?.trim()) {
+      throw new BadRequestException('Payment reference is required');
+    }
+
     try {
+      const task = await this.prisma.task.findUnique({
+        where: { paymentReference: reference } as any,
+      });
+
+      if (!task) {
+        throw new NotFoundException('Task not found for this payment reference');
+      }
+
+      if (task.creatorId !== userId) {
+        throw new ForbiddenException('You can only verify payment for your own tasks');
+      }
+
+      const taskData = task as any;
+      if (taskData.paymentStatus === 'PAID') {
+        return {
+          message: 'Payment already verified',
+          data: {
+            task,
+            payment: {
+              reference,
+              status: 'success',
+            },
+          },
+        };
+      }
+
+      if (task.status !== TaskStatus.DRAFT) {
+        throw new BadRequestException('Only draft tasks can be verified for direct payment');
+      }
+
+      const verification = await this.paystackService.verifyPayment(reference);
+      const payment = verification.data;
+
+      if (payment.status !== 'success') {
+        await this.markPaymentFailed(reference);
+        throw new BadRequestException('Payment verification failed');
+      }
+
+      const breakdown = this.getTaskPaymentBreakdown(task);
+      const metadata = this.normalizePaystackMetadata(payment.metadata);
+      const expectedAmountInKobo = this.toKobo(breakdown.total);
+
+      if (payment.reference !== reference) {
+        throw new BadRequestException('Payment reference mismatch');
+      }
+
+      if (payment.amount !== expectedAmountInKobo) {
+        throw new BadRequestException('Payment amount mismatch');
+      }
+
+      if (payment.currency !== 'NGN') {
+        throw new BadRequestException('Payment currency mismatch');
+      }
+
+      if (
+        metadata.taskId !== task.id ||
+        metadata.userId !== userId ||
+        metadata.type !== DIRECT_TASK_PAYMENT_TYPE
+      ) {
+        throw new BadRequestException('Payment metadata mismatch');
+      }
+
+      const updatedTask = await this.prisma.task.update({
+        where: { id: task.id },
+        data: {
+          paymentStatus: 'PAID' as any,
+          paymentVerifiedAt: new Date(),
+        } as any,
+      });
+
+      return {
+        message: 'Direct payment verified successfully',
+        data: {
+          task: updatedTask,
+          payment: {
+            reference: payment.reference,
+            amount: payment.amount / 100,
+            status: payment.status,
+            paidAt: payment.paid_at,
+          },
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(`Payment verification error: ${error.message}`);
+    }
+  }
+
+  async handlePaymentWebhook(payload: any, signature?: string, rawBody?: Buffer | string) {
+    try {
+      if (!this.paystackService.verifyWebhookSignature(signature, rawBody)) {
+        throw new BadRequestException('Invalid Paystack webhook signature');
+      }
+
       const event = payload.event;
       const data = payload.data;
 
@@ -1739,8 +1926,68 @@ export class TasksService {
 
       return { success: true };
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException(`Webhook processing error: ${error.message}`);
     }
   }
-}
 
+  private getTaskPaymentBreakdown(task: any) {
+    const budget = Number(task.budget) || 0;
+    const platformFeePercentage = Number(task.platformFeePercentage) || 5;
+    const platformFee = (budget * platformFeePercentage) / 100;
+    const total = budget + platformFee;
+
+    if (!Number.isFinite(total) || total <= 0) {
+      throw new BadRequestException('Task payment amount is invalid');
+    }
+
+    return {
+      budget,
+      platformFee,
+      total,
+    };
+  }
+
+  private toKobo(amount: number): number {
+    return Math.round(amount * 100);
+  }
+
+  private normalizePaystackMetadata(metadata: unknown): Record<string, any> {
+    if (!metadata) {
+      return {};
+    }
+
+    if (typeof metadata === 'string') {
+      try {
+        return JSON.parse(metadata);
+      } catch {
+        return {};
+      }
+    }
+
+    if (typeof metadata === 'object') {
+      return metadata as Record<string, any>;
+    }
+
+    return {};
+  }
+
+  private async markPaymentFailed(reference: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { paymentReference: reference } as any,
+    });
+
+    if (!task) {
+      return;
+    }
+
+    await this.prisma.task.update({
+      where: { id: task.id },
+      data: {
+        paymentStatus: 'FAILED' as any,
+      } as any,
+    });
+  }
+}
