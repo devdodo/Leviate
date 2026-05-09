@@ -1,6 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'crypto';
 
 export interface PaystackBank {
   id: number;
@@ -251,33 +250,13 @@ export class PaystackService {
       'POST',
       {
         email: data.email,
-        amount: Math.round(data.amount * 100), // Convert to kobo
+        amount: data.amount * 100, // Convert to kobo
         reference: data.reference,
         callback_url: data.callback_url,
         metadata: data.metadata,
       },
     );
     return response;
-  }
-
-  verifyWebhookSignature(signature: string | undefined, rawBody: Buffer | string | undefined): boolean {
-    this.assertSecretConfigured();
-
-    if (!signature || !rawBody) {
-      return false;
-    }
-
-    const computed = createHmac('sha512', this.secretKey)
-      .update(rawBody)
-      .digest('hex');
-
-    const receivedBuffer = Buffer.from(signature, 'utf8');
-    const computedBuffer = Buffer.from(computed, 'utf8');
-
-    return (
-      receivedBuffer.length === computedBuffer.length &&
-      timingSafeEqual(receivedBuffer, computedBuffer)
-    );
   }
 
   /**
@@ -348,3 +327,4 @@ export class PaystackService {
     return response;
   }
 }
+

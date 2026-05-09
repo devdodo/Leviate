@@ -10,6 +10,21 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OnboardingDto } from './dto/onboarding.dto';
 import { VerifyNinDto } from './dto/verify-nin.dto';
 import { LinkSocialDto } from './dto/link-social.dto';
+import { RecentActivityQueryDto } from './dto/recent-activity-query.dto';
+import {
+  ApplicationStatus,
+  ReferralStatus,
+  VerificationStatus,
+} from '@prisma/client';
+
+type ActivityRow = {
+  id: string;
+  type: string;
+  title: string;
+  description?: string;
+  occurredAt: Date;
+  metadata: Record<string, unknown>;
+};
 
 @Injectable()
 export class UsersService {
@@ -256,6 +271,283 @@ export class UsersService {
         lastName: user.profile?.lastName || null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
+      },
+    };
+  }
+
+  /**
+   * Unified timeline for the current user: tasks, applications, submissions,
+   * wallet, notifications, referrals.
+   */
+  async getRecentActivity(userId: string, query: RecentActivityQueryDto) {
+    const limit = query.limit ?? 30;
+    const fetchCap = Math.min(Math.max(limit * 4, limit), 120);
+
+    const [
+      createdTasks,
+      applications,
+      submissions,
+      walletRows,
+      notifications,
+      referralsAsReferrer,
+      referralsAsReferred,
+    ] = await Promise.all([
+      this.prisma.task.findMany({
+        where: { creatorId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: fetchCap,
+        select: { id: true, title: true, status: true, createdAt: true },
+      }),
+      this.prisma.taskApplication.findMany({
+        where: { taskerId: userId },
+        orderBy: { appliedAt: 'desc' },
+        take: fetchCap,
+        include: { task: { select: { id: true, title: true } } },
+      }),
+      this.prisma.taskSubmission.findMany({
+        where: { taskerId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: fetchCap,
+        include: { task: { select: { id: true, title: true } } },
+      }),
+      this.prisma.walletTransaction.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: fetchCap,
+        select: {
+          id: true,
+          transactionType: true,
+          amount: true,
+          transactionCategory: true,
+          description: true,
+          status: true,
+          referenceId: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.notification.findMany({
+        where: { receiverId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: fetchCap,
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          message: true,
+          read: true,
+          data: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.referral.findMany({
+        where: { referrerId: userId, status: ReferralStatus.COMPLETED },
+        orderBy: { completedAt: 'desc' },
+        take: fetchCap,
+        select: {
+          id: true,
+          referredId: true,
+          rewardAmount: true,
+          completedAt: true,
+        },
+      }),
+      this.prisma.referral.findMany({
+        where: { referredId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: fetchCap,
+        select: {
+          id: true,
+          referrerId: true,
+          status: true,
+          completedAt: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    const items: ActivityRow[] = [];
+
+    for (const t of createdTasks) {
+      items.push({
+        id: `task_created:${t.id}`,
+        type: 'TASK_CREATED',
+        title: 'Task created',
+        description: t.title,
+        occurredAt: t.createdAt,
+        metadata: { taskId: t.id, taskStatus: t.status },
+      });
+    }
+
+    for (const a of applications) {
+      items.push({
+        id: `application_submitted:${a.id}`,
+        type: 'APPLICATION_SUBMITTED',
+        title: 'Application submitted',
+        description: a.task.title,
+        occurredAt: a.appliedAt,
+        metadata: {
+          applicationId: a.id,
+          taskId: a.taskId,
+          applicationStatus: a.status,
+        },
+      });
+      if (a.approvedAt) {
+        items.push({
+          id: `application_approved:${a.id}`,
+          type: 'APPLICATION_APPROVED',
+          title: 'Application approved',
+          description: a.task.title,
+          occurredAt: a.approvedAt,
+          metadata: { applicationId: a.id, taskId: a.taskId },
+        });
+      }
+      if (a.status === ApplicationStatus.DECLINED) {
+        items.push({
+          id: `application_declined:${a.id}`,
+          type: 'APPLICATION_DECLINED',
+          title: 'Application declined',
+          description: a.task.title,
+          occurredAt: a.updatedAt,
+          metadata: { applicationId: a.id, taskId: a.taskId },
+        });
+      }
+      if (a.status === ApplicationStatus.COMPLETED && a.completedAt) {
+        items.push({
+          id: `application_completed:${a.id}`,
+          type: 'APPLICATION_COMPLETED',
+          title: 'Job completed',
+          description: a.task.title,
+          occurredAt: a.completedAt,
+          metadata: { applicationId: a.id, taskId: a.taskId },
+        });
+      }
+    }
+
+    for (const s of submissions) {
+      items.push({
+        id: `submission_submitted:${s.id}`,
+        type: 'SUBMISSION_SUBMITTED',
+        title: 'Proof submitted',
+        description: s.task.title,
+        occurredAt: s.createdAt,
+        metadata: {
+          submissionId: s.id,
+          taskId: s.taskId,
+          proofType: s.proofType,
+          verificationStatus: s.verificationStatus,
+        },
+      });
+      if (s.verificationStatus === VerificationStatus.VERIFIED && s.verifiedAt) {
+        items.push({
+          id: `submission_verified:${s.id}`,
+          type: 'SUBMISSION_VERIFIED',
+          title: 'Submission verified',
+          description: s.task.title,
+          occurredAt: s.verifiedAt,
+          metadata: { submissionId: s.id, taskId: s.taskId },
+        });
+      }
+      if (s.verificationStatus === VerificationStatus.REJECTED && s.rejectedAt) {
+        items.push({
+          id: `submission_rejected:${s.id}`,
+          type: 'SUBMISSION_REJECTED',
+          title: 'Submission rejected',
+          description: s.task.title,
+          occurredAt: s.rejectedAt,
+          metadata: {
+            submissionId: s.id,
+            taskId: s.taskId,
+            adminComment: s.adminComment ?? null,
+          },
+        });
+      }
+    }
+
+    for (const w of walletRows) {
+      items.push({
+        id: `wallet:${w.id}`,
+        type: 'WALLET_TRANSACTION',
+        title:
+          w.transactionType === 'CREDIT' ? 'Wallet credit' : 'Wallet debit',
+        description: w.description,
+        occurredAt: w.createdAt,
+        metadata: {
+          transactionId: w.id,
+          transactionType: w.transactionType,
+          category: w.transactionCategory,
+          amount: Number(w.amount),
+          status: w.status,
+          referenceId: w.referenceId,
+        },
+      });
+    }
+
+    for (const n of notifications) {
+      items.push({
+        id: `notification:${n.id}`,
+        type: 'NOTIFICATION',
+        title: n.title,
+        description: n.message,
+        occurredAt: n.createdAt,
+        metadata: {
+          notificationId: n.id,
+          notificationType: n.type,
+          read: n.read,
+          data: n.data ?? null,
+        },
+      });
+    }
+
+    for (const r of referralsAsReferrer) {
+      if (r.completedAt) {
+        items.push({
+          id: `referral_reward:${r.id}`,
+          type: 'REFERRAL_REWARD',
+          title: 'Referral reward',
+          description: `Reward for referring a user`,
+          occurredAt: r.completedAt,
+          metadata: {
+            referralId: r.id,
+            referredUserId: r.referredId,
+            rewardAmount: Number(r.rewardAmount),
+          },
+        });
+      }
+    }
+
+    for (const r of referralsAsReferred) {
+      items.push({
+        id: `referral_joined:${r.id}`,
+        type: 'REFERRAL_JOINED',
+        title: 'Joined via referral',
+        description:
+          r.status === ReferralStatus.COMPLETED
+            ? 'Referral completed'
+            : 'Referral pending',
+        occurredAt: r.completedAt ?? r.createdAt,
+        metadata: {
+          referralId: r.id,
+          referrerId: r.referrerId,
+          status: r.status,
+        },
+      });
+    }
+
+    items.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
+
+    const sliced = items.slice(0, limit);
+
+    return {
+      message: 'Recent activity retrieved successfully',
+      data: {
+        items: sliced.map((row) => ({
+          id: row.id,
+          type: row.type,
+          title: row.title,
+          description: row.description,
+          occurredAt: row.occurredAt.toISOString(),
+          metadata: row.metadata,
+        })),
+        limit,
       },
     };
   }

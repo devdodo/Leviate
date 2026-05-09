@@ -4,6 +4,7 @@ import {
   Put,
   Post,
   Body,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -24,6 +25,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OnboardingDto } from './dto/onboarding.dto';
 import { VerifyNinDto } from './dto/verify-nin.dto';
 import { LinkSocialDto } from './dto/link-social.dto';
+import { RecentActivityQueryDto } from './dto/recent-activity-query.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Users')
@@ -32,6 +34,24 @@ import { BaseResponseDto } from '../common/dto/base-response.dto';
 @ApiBearerAuth('JWT-auth')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Get('me/recent-activity')
+  @ApiOperation({
+    summary: 'Recent activity for the current user',
+    description:
+      'Merged timeline: tasks you created, applications, submissions, wallet movements, notifications, referrals. Sorted newest first.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Activity items retrieved successfully',
+    type: BaseResponseDto,
+  })
+  async getRecentActivity(
+    @CurrentUser() user: any,
+    @Query() query: RecentActivityQueryDto,
+  ) {
+    return this.usersService.getRecentActivity(user.id, query);
+  }
 
   @Get('me')
   @ApiOperation({ summary: 'Get current user information' })
