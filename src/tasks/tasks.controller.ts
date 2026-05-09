@@ -129,8 +129,8 @@ export class TasksController {
     description: 'Tasks retrieved successfully',
     type: BaseResponseDto,
   })
-  async getTasks(@Query() query: TaskQueryDto) {
-    return this.tasksService.getTasks(query);
+  async getTasks(@Query() query: TaskQueryDto, @CurrentUser() user: any) {
+    return this.tasksService.getTasks(query, { userType: user.userType });
   }
 
   @Get(':id/similar')
@@ -177,8 +177,11 @@ export class TasksController {
     type: BaseResponseDto,
   })
   @ApiResponse({ status: 403, description: 'User does not meet task requirements' })
-  async getTaskById(@Param('id') id: string, @CurrentUser() user?: any) {
-    return this.tasksService.getTaskById(id, user?.id);
+  async getTaskById(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.tasksService.getTaskById(id, {
+      id: user.id,
+      userType: user.userType,
+    });
   }
 
   @Post()

@@ -432,7 +432,7 @@ export class UsersService {
         metadata: {
           submissionId: s.id,
           taskId: s.taskId,
-          proofType: s.proofType,
+          proofType: this.primaryProofType(s.proofs),
           verificationStatus: s.verificationStatus,
         },
       });
@@ -550,6 +550,13 @@ export class UsersService {
         limit,
       },
     };
+  }
+
+  private primaryProofType(proofs: unknown): string | undefined {
+    const arr = proofs as Array<{ proofType?: string }> | undefined;
+    if (!Array.isArray(arr) || arr.length === 0) return undefined;
+    const t = arr[0]?.proofType;
+    return typeof t === 'string' ? t : undefined;
   }
 }
 

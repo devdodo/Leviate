@@ -613,11 +613,90 @@ export class TasksService {
     return filteredTasks;
   }
 
-  async getTasks(query: TaskQueryDto) {
+  /**
+   * Planned or assigned contributor headcount used to split task budget for display/payout share.
+   * Uses audiencePreferences / targeting keys when set; otherwise counts assigned applications
+   * (APPROVED/COMPLETED). Minimum 1.
+   */
+  private contributorSlotsForShare(task: any): number {
+    const prefs = (task.audiencePreferences || {}) as Record<string, unknown>;
+    const targeting = (task.targeting || {}) as Record<string, unknown>;
+    const keys = ['contributorCount', 'maxContributors', 'contributorsWanted', 'contributors'];
+    for (const k of keys) {
+      const v = prefs[k] ?? targeting[k];
+      if (v !== undefined && v !== null) {
+        const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+        if (Number.isFinite(n) && n >= 1) {
+          return Math.min(Math.floor(n), 50000);
+        }
+      }
+    }
+
+    const assigned =
+      Array.isArray(task.applications) ? task.applications.length : 0;
+
+    return Math.max(1, assigned || 1);
+  }
+
+  /**
+   * Estimated net amount per contributor: (budget ÷ slots) after platform fee.
+   * Matches proportional split from the creator-funded task budget.
+   */
+  private contributorNetPerShare(task: any): number {
+    const gross = Number(task.budget ?? 0);
+    const feePct = Number(task.platformFeePercentage ?? 5);
+    const slots = this.contributorSlotsForShare(task);
+    const perGross = gross / slots;
+    const net = (perGross * (100 - feePct)) / 100;
+    return Math.round(net * 100) / 100;
+  }
+
+  /**
+   * Contributor-facing task payload: no payment fields, no creator/creatorId, no submissions,
+   * no assigned-application ids. Gross budget hidden. `budgetPerTask` is net share per contributor.
+   */
+  private sanitizeTaskForContributorView(rawTask: any): any {
+    if (!rawTask) return rawTask;
+    const net = this.contributorNetPerShare(rawTask);
+    const {
+      creator: _c,
+      creatorId: _cid,
+      submissions: _subs,
+      applications: _apps,
+      paymentStatus: _ps,
+      paymentReference: _pr,
+      paymentAuthorizationUrl: _pa,
+      paymentVerifiedAt: _pv,
+      budget: _b,
+      totalBudget: _tb,
+      platformFeePercentage: _pf,
+      budgetPerTask: _legacyBpt,
+      _count: rawCount,
+      ...rest
+    } = rawTask;
+
+    const _count =
+      rawCount && typeof rawCount === 'object'
+        ? { applications: (rawCount as any).applications }
+        : undefined;
+
+    return {
+      ...rest,
+      ...(_count !== undefined ? { _count } : {}),
+      budgetPerTask: net.toFixed(2),
+    };
+  }
+
+  private async queryPublishedTasksPage(
+    query: TaskQueryDto,
+    includeCreator: boolean,
+  ): Promise<{
+    tasks: any[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
     const {
       page = 1,
       limit = 10,
-      status,
       platform,
       goal,
       category,
@@ -631,8 +710,6 @@ export class TasksService {
     const skip = (page - 1) * limit;
 
     const where: any = {
-      // Only show ACTIVE tasks in public view (drafts and other statuses are excluded)
-      // Public endpoint should only show published/active tasks
       status: TaskStatus.ACTIVE,
     };
 
@@ -640,14 +717,10 @@ export class TasksService {
       where.category = category;
     }
 
-    // Platform filtering is performed in-memory after fetching since Prisma's JSON filtering
-    // doesn't efficiently support nested object queries in JSON arrays
-
     if (goal) {
-      // Support both new category field and legacy goals field
       where.OR = [
         { category: goal },
-        { goals: { has: goal } }, // Legacy support
+        { goals: { has: goal } },
       ];
     }
 
@@ -665,7 +738,6 @@ export class TasksService {
     }
 
     const orderBy: any = {};
-    // Map legacy field names to new ones
     const sortFieldMap: Record<string, string> = {
       budgetPerTask: 'budget',
       createdAt: 'createdAt',
@@ -674,30 +746,50 @@ export class TasksService {
     const mappedSortBy = sortFieldMap[sortBy] || sortBy;
     orderBy[mappedSortBy] = sortOrder;
 
-    // Fetch tasks (fetch more if platform filter is needed for in-memory filtering)
     const fetchLimit = platform ? limit * 3 : limit;
+    const loadContributorShareContext = !includeCreator;
+
     const [allTasks, totalCount] = await Promise.all([
       this.prisma.task.findMany({
         where,
-        skip: platform ? 0 : skip, // Fetch from start if filtering by platform
+        skip: platform ? 0 : skip,
         take: fetchLimit,
         orderBy,
         include: {
-          creator: {
-            select: {
-              id: true,
-              email: true,
-              reputationScore: true,
-              profile: {
-                select: {
-                  firstName: true,
-                  lastName: true,
-                  city: true,
-                  state: true,
+          ...(includeCreator
+            ? {
+                creator: {
+                  select: {
+                    id: true,
+                    email: true,
+                    reputationScore: true,
+                    profile: {
+                      select: {
+                        firstName: true,
+                        lastName: true,
+                        city: true,
+                        state: true,
+                      },
+                    },
+                  },
                 },
-              },
-            },
-          },
+              }
+            : {}),
+          ...(loadContributorShareContext
+            ? {
+                applications: {
+                  where: {
+                    status: {
+                      in: [
+                        ApplicationStatus.APPROVED,
+                        ApplicationStatus.COMPLETED,
+                      ],
+                    },
+                  },
+                  select: { id: true },
+                },
+              }
+            : {}),
           _count: {
             select: {
               applications: true,
@@ -709,7 +801,6 @@ export class TasksService {
       this.prisma.task.count({ where }),
     ]);
 
-    // Filter by platform if specified (platforms stored as array of strings, e.g. ["instagram"])
     let tasks = allTasks;
     if (platform) {
       tasks = allTasks.filter((task) => {
@@ -719,30 +810,40 @@ export class TasksService {
       });
     }
 
-    // Do not filter the list by contributor eligibility here: it ran for every JWT user, only
-    // fetched `limit` rows from DB first, and often returned an empty page for contributors.
-    // Eligibility is enforced on GET /tasks/:id and POST /tasks/:id/apply instead.
-
     const total = platform ? tasks.length : totalCount;
 
     const startIndex = (page - 1) * limit;
     tasks = tasks.slice(startIndex, startIndex + limit);
 
     return {
-      message: 'Tasks retrieved successfully',
-      data: {
-        tasks,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.max(1, Math.ceil(total / limit)),
-        },
+      tasks,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     };
   }
 
-  async getTaskById(id: string, userId?: string) {
+  async getTasks(query: TaskQueryDto, viewer?: { userType: UserType }) {
+    const includeCreator = viewer?.userType !== ('CONTRIBUTOR' as UserType);
+    const { tasks, pagination } = await this.queryPublishedTasksPage(query, includeCreator);
+
+    const list = includeCreator
+      ? tasks
+      : tasks.map((t) => this.sanitizeTaskForContributorView(t));
+
+    return {
+      message: 'Tasks retrieved successfully',
+      data: {
+        tasks: list,
+        pagination,
+      },
+    };
+  }
+
+  async getTaskById(id: string, viewer?: { id: string; userType: UserType }) {
     const task = await this.prisma.task.findUnique({
       where: { id },
       include: {
@@ -791,6 +892,8 @@ export class TasksService {
       throw new NotFoundException('Task not found');
     }
 
+    const userId = viewer?.id;
+
     // Check if user meets requirements (only for contributors viewing active tasks)
     if (userId && task.status === TaskStatus.ACTIVE) {
       const user = await this.prisma.user.findUnique({
@@ -807,9 +910,18 @@ export class TasksService {
       }
     }
 
+    const contributorBrowsingOthersTask =
+      viewer &&
+      viewer.userType === ('CONTRIBUTOR' as UserType) &&
+      task.creatorId !== viewer.id;
+
+    const data = contributorBrowsingOthersTask
+      ? this.sanitizeTaskForContributorView(task)
+      : task;
+
     return {
       message: 'Task retrieved successfully',
-      data: task,
+      data,
     };
   }
 
@@ -817,13 +929,12 @@ export class TasksService {
    * Marketplace feed: ACTIVE tasks shaped for listing cards (public).
    */
   async getMarketplaceList(query: TaskQueryDto) {
-    const result = await this.getTasks(query);
-    const tasks = (result.data.tasks as any[]).map((t) => this.toMarketplaceCard(t));
+    const { tasks, pagination } = await this.queryPublishedTasksPage(query, false);
     return {
       message: 'Marketplace tasks retrieved successfully',
       data: {
-        tasks,
-        pagination: result.data.pagination,
+        tasks: tasks.map((t) => this.toMarketplaceCard(t)),
+        pagination,
       },
     };
   }
@@ -835,21 +946,13 @@ export class TasksService {
     const task = await this.prisma.task.findUnique({
       where: { id },
       include: {
-        creator: {
-          select: {
-            id: true,
-            email: true,
-            reputationScore: true,
-            createdAt: true,
-            profile: {
-              select: {
-                firstName: true,
-                lastName: true,
-                city: true,
-                state: true,
-              },
+        applications: {
+          where: {
+            status: {
+              in: [ApplicationStatus.APPROVED, ApplicationStatus.COMPLETED],
             },
           },
+          select: { id: true },
         },
         _count: { select: { applications: true, submissions: true } },
       },
@@ -888,20 +991,13 @@ export class TasksService {
       take: Math.min(limit, 20),
       orderBy: { createdAt: 'desc' },
       include: {
-        creator: {
-          select: {
-            id: true,
-            email: true,
-            reputationScore: true,
-            profile: {
-              select: {
-                firstName: true,
-                lastName: true,
-                city: true,
-                state: true,
-              },
+        applications: {
+          where: {
+            status: {
+              in: [ApplicationStatus.APPROVED, ApplicationStatus.COMPLETED],
             },
           },
+          select: { id: true },
         },
         _count: { select: { applications: true, submissions: true } },
       },
@@ -956,7 +1052,7 @@ export class TasksService {
   }
 
   private toMarketplaceCard(task: any) {
-    const budget = Number(task.budget);
+    const net = this.contributorNetPerShare(task);
     return {
       id: task.id,
       title: task.title,
@@ -967,17 +1063,16 @@ export class TasksService {
       categoryLabel: this.categoryLabel(task.category),
       taskType: task.taskType,
       skills: this.extractSkills(task),
-      budget,
-      budgetLabel: this.formatBudgetLabel(task),
+      budgetPerTask: net.toFixed(2),
+      budgetLabel: this.formatBudgetLabelFromAmount(net, task.scheduleType),
       scheduleType: task.scheduleType,
-      paymentVerified: (task as any).paymentStatus === 'PAID',
       platforms: task.platforms,
       proposalCount: task._count?.applications ?? 0,
-      client: this.toMarketplaceClient(task.creator),
     };
   }
 
   private toMarketplaceDetail(task: any) {
+    const net = this.contributorNetPerShare(task);
     return {
       id: task.id,
       title: task.title,
@@ -989,9 +1084,8 @@ export class TasksService {
       scheduleType: task.scheduleType,
       scheduleStart: task.scheduleStart,
       scheduleEnd: task.scheduleEnd,
-      budget: Number(task.budget),
-      budgetLabel: this.formatBudgetLabel(task),
-      paymentVerified: (task as any).paymentStatus === 'PAID',
+      budgetPerTask: net.toFixed(2),
+      budgetLabel: this.formatBudgetLabelFromAmount(net, task.scheduleType),
       platforms: task.platforms,
       hashtags: task.hashtags,
       buzzwords: task.buzzwords,
@@ -1004,34 +1098,7 @@ export class TasksService {
       createdAt: task.createdAt,
       postedLabel: this.formatPostedLabel(task.createdAt),
       proposalCount: task._count?.applications ?? 0,
-      client: this.toMarketplaceClient(task.creator),
     };
-  }
-
-  private toMarketplaceClient(creator: any) {
-    if (!creator) {
-      return null;
-    }
-    const profile = creator.profile;
-    const displayName = profile?.firstName || profile?.lastName
-      ? [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim()
-      : (creator.email ? String(creator.email).split('@')[0] : 'Client');
-    return {
-      id: creator.id,
-      displayName,
-      rating: this.reputationToStars(creator.reputationScore ?? 75),
-      reviewCount: 0,
-      location:
-        profile?.city || profile?.state
-          ? [profile.city, profile.state].filter(Boolean).join(', ')
-          : null,
-      memberSince: creator.createdAt,
-    };
-  }
-
-  private reputationToStars(score: number): number {
-    const s = Math.max(0, Math.min(100, score));
-    return Math.round((s / 100) * 50) / 10;
   }
 
   private previewText(text: string | null | undefined, max: number): string {
@@ -1072,14 +1139,13 @@ export class TasksService {
     return [...new Set(tags)].filter(Boolean).slice(0, 12);
   }
 
-  private formatBudgetLabel(task: any): string {
-    const n = Number(task.budget);
+  private formatBudgetLabelFromAmount(amount: number, scheduleType: string): string {
     const formatted = new Intl.NumberFormat('en-NG', {
       style: 'currency',
       currency: 'NGN',
       maximumFractionDigits: 0,
-    }).format(n);
-    if (task.scheduleType === 'FIXED') {
+    }).format(amount);
+    if (scheduleType === 'FIXED') {
       return `${formatted} · fixed budget`;
     }
     return `${formatted} · flexible schedule`;
@@ -1238,22 +1304,7 @@ export class TasksService {
     const applications = await this.prisma.taskApplication.findMany({
       where,
       include: {
-        task: {
-          include: {
-            creator: {
-              select: {
-                id: true,
-                email: true,
-                profile: {
-                  select: {
-                    firstName: true,
-                    lastName: true,
-                  },
-                },
-              },
-            },
-          },
-        },
+        task: true,
         submissions: {
           orderBy: {
             createdAt: 'desc',
@@ -1266,25 +1317,15 @@ export class TasksService {
       },
     });
 
-    // Group by status
-    const grouped = {
-      applied: applications.filter((a) => a.status === ApplicationStatus.PENDING),
-      approved: applications.filter((a) => a.status === ApplicationStatus.APPROVED),
-      declined: applications.filter((a) => a.status === ApplicationStatus.DECLINED),
-      completed: applications.filter((a) => a.status === ApplicationStatus.COMPLETED),
-      expired: applications.filter((a) => a.status === ApplicationStatus.EXPIRED),
-      ongoing: applications.filter(
-        (a) =>
-          a.status === ApplicationStatus.APPROVED &&
-          a.task.status === TaskStatus.ACTIVE,
-      ),
-    };
+    const shaped = applications.map(({ submissions: _omitSubs, ...app }) => ({
+      ...app,
+      task: this.sanitizeTaskForContributorView(app.task),
+    }));
 
     return {
       message: 'My jobs retrieved successfully',
       data: {
-        applications,
-        grouped,
+        applications: shaped,
       },
     };
   }

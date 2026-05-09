@@ -9,7 +9,12 @@ import { AIService } from '../common/services/ai.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
-import { VerificationStatus, ApplicationStatus, TaskStatus } from '@prisma/client';
+import {
+  Prisma,
+  VerificationStatus,
+  ApplicationStatus,
+  TaskStatus,
+} from '@prisma/client';
 
 @Injectable()
 export class SubmissionsService {
@@ -20,8 +25,23 @@ export class SubmissionsService {
     private reputationService: ReputationService,
   ) {}
 
+  private submissionProofSummary(submission: {
+    proofs: unknown;
+    submissionText?: string | null;
+  }): string {
+    const text = submission.submissionText?.trim();
+    if (text) return text;
+    const raw = submission.proofs as Array<{ proofType?: string; proofUrl?: string }>;
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw
+        .map((p) => `[${p.proofType ?? 'PROOF'}] ${p.proofUrl ?? ''}`)
+        .join('\n');
+    }
+    return '';
+  }
+
   async createSubmission(userId: string, createSubmissionDto: CreateSubmissionDto) {
-    const { taskId, applicationId, proofType, proofUrl, notes } = createSubmissionDto;
+    const { taskId, applicationId, proof, notes } = createSubmissionDto;
 
     // Verify application belongs to user
     const application = await this.prisma.taskApplication.findUnique({
@@ -65,11 +85,10 @@ export class SubmissionsService {
         taskId,
         applicationId,
         taskerId: userId,
-        proofType,
-        proofUrl,
-        submissionText: notes,
+        proofs: proof as unknown as Prisma.InputJsonValue,
+        submissionText: notes ?? null,
         verificationStatus: VerificationStatus.PENDING,
-      },
+      } satisfies Prisma.TaskSubmissionUncheckedCreateInput,
     });
 
     // Update application status
@@ -312,7 +331,7 @@ export class SubmissionsService {
 
       // For MVP, we'll do a simple verification
       // In production, this would extract text from screenshot (OCR) or analyze link
-      const submissionText = submission.submissionText || submission.proofUrl;
+      const submissionText = this.submissionProofSummary(submission);
 
       // Verify using AI
       const verificationResult = await this.aiService.verifySubmission(

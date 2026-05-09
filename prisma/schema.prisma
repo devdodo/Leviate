@@ -77,11 +77,6 @@ enum ApplicationStatus {
   EXPIRED
 }
 
-enum ProofType {
-  SCREENSHOT
-  LINK
-}
-
 enum VerificationStatus {
   PENDING
   VERIFYING
@@ -288,8 +283,7 @@ model TaskSubmission {
   task                Task               @relation(fields: [taskId], references: [id])
   taskerId            String             @map("tasker_id")
   tasker              User               @relation(fields: [taskerId], references: [id])
-  proofType           ProofType          @map("proof_type")
-  proofUrl            String             @map("proof_url") @db.Text
+  proofs              Json               @map("proofs") // [{ proofType, proofUrl }, ...]
   submissionText      String?            @map("submission_text") @db.Text
   verificationStatus  VerificationStatus @default(PENDING) @map("verification_status")
   aiVerificationScore Decimal?           @map("ai_verification_score") @db.Decimal(5, 2) // 0-100

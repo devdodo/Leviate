@@ -1,6 +1,32 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEnum, IsOptional } from 'class-validator';
-import { ProofType } from '@prisma/client';
+import {
+  IsString,
+  IsEnum,
+  IsOptional,
+  IsArray,
+  ArrayMinSize,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+/** Allowed proof kinds stored inside each proofs[] item (JSON). */
+export enum SubmissionProofType {
+  SCREENSHOT = 'SCREENSHOT',
+  LINK = 'LINK',
+}
+
+export class SubmissionProofItemDto {
+  @ApiProperty({ enum: SubmissionProofType, example: SubmissionProofType.SCREENSHOT })
+  @IsEnum(SubmissionProofType)
+  proofType: SubmissionProofType;
+
+  @ApiProperty({
+    example: 'https://example.com/screenshot.png',
+    description: 'URL to screenshot or link',
+  })
+  @IsString()
+  proofUrl: string;
+}
 
 export class CreateSubmissionDto {
   @ApiProperty({ example: 'task-id-here' })
@@ -11,20 +37,24 @@ export class CreateSubmissionDto {
   @IsString()
   applicationId: string;
 
-  @ApiProperty({ enum: ProofType, example: ProofType.SCREENSHOT })
-  @IsEnum(ProofType)
-  proofType: ProofType;
-
   @ApiProperty({
-    example: 'https://example.com/screenshot.png',
-    description: 'URL to screenshot or link',
+    type: [SubmissionProofItemDto],
+    description: 'One or more proof attachments for this submission',
+    example: [
+      {
+        proofType: SubmissionProofType.SCREENSHOT,
+        proofUrl: 'https://example.com/screenshot.png',
+      },
+    ],
   })
-  @IsString()
-  proofUrl: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => SubmissionProofItemDto)
+  proof: SubmissionProofItemDto[];
 
   @ApiProperty({ required: false, example: 'Task completed as per requirements' })
   @IsOptional()
   @IsString()
   notes?: string;
 }
-
