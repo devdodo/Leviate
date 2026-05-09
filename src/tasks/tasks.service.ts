@@ -613,7 +613,7 @@ export class TasksService {
     return filteredTasks;
   }
 
-  async getTasks(query: TaskQueryDto, userId?: string) {
+  async getTasks(query: TaskQueryDto) {
     const {
       page = 1,
       limit = 10,
@@ -719,17 +719,14 @@ export class TasksService {
       });
     }
 
-    // Filter by user requirements (location, target audience, etc.)
-    if (userId) {
-      tasks = await this.filterTasksByUserRequirements(tasks, userId);
-    }
+    // Do not filter the list by contributor eligibility here: it ran for every JWT user, only
+    // fetched `limit` rows from DB first, and often returned an empty page for contributors.
+    // Eligibility is enforced on GET /tasks/:id and POST /tasks/:id/apply instead.
 
-    // Apply pagination after all filtering
+    const total = platform ? tasks.length : totalCount;
+
     const startIndex = (page - 1) * limit;
     tasks = tasks.slice(startIndex, startIndex + limit);
-
-    // Calculate total for pagination
-    const total = platform || userId ? tasks.length : totalCount;
 
     return {
       message: 'Tasks retrieved successfully',
@@ -739,7 +736,7 @@ export class TasksService {
           page,
           limit,
           total,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.max(1, Math.ceil(total / limit)),
         },
       },
     };
@@ -819,8 +816,8 @@ export class TasksService {
   /**
    * Marketplace feed: ACTIVE tasks shaped for listing cards (public).
    */
-  async getMarketplaceList(query: TaskQueryDto, userId?: string) {
-    const result = await this.getTasks(query, userId);
+  async getMarketplaceList(query: TaskQueryDto) {
+    const result = await this.getTasks(query);
     const tasks = (result.data.tasks as any[]).map((t) => this.toMarketplaceCard(t));
     return {
       message: 'Marketplace tasks retrieved successfully',

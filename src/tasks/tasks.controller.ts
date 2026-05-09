@@ -53,11 +53,11 @@ export class TasksController {
   @ApiOperation({
     summary: 'Marketplace task feed (public)',
     description:
-      'Lists published (ACTIVE) tasks shaped for job cards: budget label, skills, payment verified, client rating, posted time. Optional JWT applies contributor filters when logged in.',
+      'Lists published (ACTIVE) tasks shaped for job cards: budget label, skills, payment verified, client rating, posted time. Optional Bearer token does not change the feed; eligibility is on detail and apply.',
   })
   @ApiResponse({ status: 200, description: 'Marketplace tasks', type: BaseResponseDto })
-  async getMarketplace(@Query() query: TaskQueryDto, @CurrentUser() user?: any) {
-    return this.tasksService.getMarketplaceList(query, user?.id);
+  async getMarketplace(@Query() query: TaskQueryDto) {
+    return this.tasksService.getMarketplaceList(query);
   }
 
   @Get('marketplace/:id')
@@ -119,14 +119,18 @@ export class TasksController {
   @Get()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Get all tasks (filtered by user requirements if authenticated)' })
+  @ApiOperation({
+    summary: 'List active tasks',
+    description:
+      'Published (ACTIVE) tasks with pagination. Same catalogue for all authenticated roles; contributor eligibility is enforced on GET task detail and POST apply.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Tasks retrieved successfully',
     type: BaseResponseDto,
   })
-  async getTasks(@Query() query: TaskQueryDto, @CurrentUser() user?: any) {
-    return this.tasksService.getTasks(query, user?.id);
+  async getTasks(@Query() query: TaskQueryDto) {
+    return this.tasksService.getTasks(query);
   }
 
   @Get(':id/similar')
