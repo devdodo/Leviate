@@ -1,5 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsInt, Min, Max, IsObject } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsInt,
+  Min,
+  Max,
+  IsObject,
+  IsArray,
+} from 'class-validator';
 
 export class UpdateProfileDto {
   @ApiProperty({ required: false, example: 'John' })
@@ -19,9 +27,10 @@ export class UpdateProfileDto {
   @Max(120)
   age?: number;
 
-  @ApiProperty({ required: false, example: ['Gaming', 'Technology', 'Music'] })
+  @ApiProperty({ required: false, example: ['Gaming', 'Technology', 'Music'], type: [String] })
   @IsOptional()
-  @IsObject()
+  @IsArray()
+  @IsString({ each: true })
   hobbiesInterests?: string[];
 
   @ApiProperty({ required: false, example: 'Employed' })
