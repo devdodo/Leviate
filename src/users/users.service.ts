@@ -16,6 +16,10 @@ import {
   ReferralStatus,
   VerificationStatus,
 } from '@prisma/client';
+import {
+  assertLegalNameUpdatesAllowed,
+  legalNamesLockUpdate,
+} from '../common/utils/profile-legal-name.util';
 
 type ActivityRow = {
   id: string;
@@ -69,6 +73,12 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    assertLegalNameUpdatesAllowed(
+      user.profile,
+      updateProfileDto.firstName,
+      updateProfileDto.lastName,
+    );
 
     // Update or create profile
     const profileData: any = {
@@ -129,6 +139,7 @@ export class UsersService {
   async completeOnboarding(userId: string, onboardingDto: OnboardingDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
+      include: { profile: true },
     });
 
     if (!user) {
@@ -138,6 +149,18 @@ export class UsersService {
     if (!user.emailVerified) {
       throw new BadRequestException('Please verify your email first');
     }
+
+    assertLegalNameUpdatesAllowed(
+      user.profile,
+      onboardingDto.firstName,
+      onboardingDto.lastName,
+    );
+
+    const nameLockData = legalNamesLockUpdate(
+      user.profile,
+      onboardingDto.firstName,
+      onboardingDto.lastName,
+    );
 
     // Create or update profile
     const profileData = {
@@ -156,8 +179,9 @@ export class UsersService {
       create: {
         userId,
         ...profileData,
+        ...nameLockData,
       },
-      update: profileData,
+      update: { ...profileData, ...nameLockData },
     });
 
     // Mark profile as complete

@@ -187,8 +187,9 @@ model UserProfile {
   id                 String  @id @default(uuid())
   userId             String  @unique @map("user_id")
   user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  firstName          String? @map("first_name") @db.VarChar(100)
-  lastName           String? @map("last_name") @db.VarChar(100)
+  firstName            String?   @map("first_name") @db.VarChar(100)
+  lastName             String?   @map("last_name") @db.VarChar(100)
+  legalNamesLockedAt   DateTime? @map("legal_names_locked_at") @db.Timestamptz(6)
   age                Int?
   hobbiesInterests   Json?   @map("hobbies_interests") // Array of strings
   employmentStatus   String? @map("employment_status") @db.VarChar(50)
@@ -223,6 +224,7 @@ model Task {
   buzzwords             Json? // Array of strings
   status                TaskStatus   @default(DRAFT)
   budget                Decimal      @map("budget") @db.Decimal(10, 2) // Single budget amount
+  contributorSlots      Int          @default(1) @map("contributor_slots") // Planned contributors completing the task
   platformFeePercentage Decimal      @default(5) @map("platform_fee_percentage") @db.Decimal(5, 2)
   aiGeneratedBrief      String?      @map("ai_generated_brief") @db.Text
   llmContextFile        String?      @map("llm_context_file") @db.Text // LLM.txt content
@@ -402,6 +404,7 @@ model BankAccount {
   isVerified            Boolean @default(false) @map("is_verified")
   isDefault             Boolean @default(false) @map("is_default")
   paystackRecipientCode String? @map("paystack_recipient_code") @db.VarChar(100)
+  withdrawalOtps        WithdrawalOtp[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -412,12 +415,15 @@ model BankAccount {
 }
 
 model WithdrawalOtp {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  otp       String   @db.VarChar(10)
-  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
-  used      Boolean   @default(false)
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  otp           String   @db.VarChar(10)
+  amount        Decimal? @db.Decimal(10, 2)
+  bankAccountId String?  @map("bank_account_id")
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  expiresAt     DateTime @map("expires_at") @db.Timestamptz(6)
+  used          Boolean  @default(false)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

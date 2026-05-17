@@ -19,7 +19,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AddBankDto } from './dto/add-bank.dto';
 import { VerifyWithdrawalOtpDto } from './dto/verify-withdrawal-otp.dto';
-import { WithdrawDto } from '../wallet/dto/withdraw.dto';
+import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Banks')
@@ -94,21 +94,27 @@ export class BanksController {
   }
 
   @Post('withdrawal/request-otp')
-  @ApiOperation({ summary: 'Request withdrawal OTP' })
+  @ApiOperation({
+    summary: 'Request withdrawal OTP for a saved bank account',
+    description:
+      'Body: amount + bankId. OTP is returned in the response until email delivery is enabled.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Withdrawal OTP sent to email',
+    description: 'Withdrawal OTP generated for the selected bank account',
     type: BaseResponseDto,
   })
   async requestWithdrawalOtp(
     @CurrentUser() user: any,
-    @Body() withdrawDto: WithdrawDto,
+    @Body() withdrawDto: RequestWithdrawalDto,
   ) {
     return this.banksService.requestWithdrawalOtp(user.id, withdrawDto);
   }
 
   @Post('withdrawal/verify-otp')
-  @ApiOperation({ summary: 'Verify withdrawal OTP and process withdrawal' })
+  @ApiOperation({
+    summary: 'Verify withdrawal OTP and send funds to the bank from request-otp',
+  })
   @ApiResponse({
     status: 200,
     description: 'Withdrawal processed successfully',
@@ -116,14 +122,9 @@ export class BanksController {
   })
   async verifyWithdrawalOtp(
     @CurrentUser() user: any,
-    @Body() body: VerifyWithdrawalOtpDto & WithdrawDto,
+    @Body() verifyOtpDto: VerifyWithdrawalOtpDto,
   ) {
-    const { otp, bankAccountId, ...withdrawDto } = body;
-    return this.banksService.verifyWithdrawalOtp(
-      user.id,
-      { otp, bankAccountId },
-      withdrawDto,
-    );
+    return this.banksService.verifyWithdrawalOtp(user.id, verifyOtpDto);
   }
 }
 

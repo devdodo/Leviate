@@ -11,9 +11,14 @@ import { EmailService } from '../common/services/email.service';
 import { WalletService } from '../wallet/wallet.service';
 import { AddBankDto } from './dto/add-bank.dto';
 import { VerifyWithdrawalOtpDto } from './dto/verify-withdrawal-otp.dto';
-import { WithdrawDto } from '../wallet/dto/withdraw.dto';
+import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaClient } from '@prisma/client';
+import {
+  assertPaystackAccountNameMatchesProfile,
+  assertProfileHasLegalNames,
+  MAX_BANK_ACCOUNTS_PER_USER,
+} from '../common/utils/profile-legal-name.util';
 
 @Injectable()
 export class BanksService {
@@ -47,10 +52,23 @@ export class BanksService {
   async addBankAccount(userId: string, addBankDto: AddBankDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
+      include: { profile: true },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    assertProfileHasLegalNames(user.profile);
+
+    const accountCount = await (this.prisma as any).bankAccount.count({
+      where: { userId },
+    });
+
+    if (accountCount >= MAX_BANK_ACCOUNTS_PER_USER) {
+      throw new BadRequestException(
+        `You can only save up to ${MAX_BANK_ACCOUNTS_PER_USER} bank accounts. Delete an existing account before adding another.`,
+      );
     }
 
     // Verify account with Paystack
@@ -65,6 +83,14 @@ export class BanksService {
         'Failed to verify bank account. Please check the account number and bank code.',
       );
     }
+
+    assertPaystackAccountNameMatchesProfile(
+      {
+        firstName: user.profile!.firstName!,
+        lastName: user.profile!.lastName!,
+      },
+      accountVerification.data.account_name,
+    );
 
     // Check if account already exists
     const existingAccount = await (this.prisma as any).bankAccount.findFirst({
@@ -209,13 +235,11 @@ export class BanksService {
   /**
    * Request withdrawal OTP
    */
-  async requestWithdrawalOtp(userId: string, withdrawDto: WithdrawDto) {
-    // Validate amount
+  async requestWithdrawalOtp(userId: string, withdrawDto: RequestWithdrawalDto) {
     if (withdrawDto.amount <= 0) {
       throw new BadRequestException('Withdrawal amount must be greater than 0');
     }
 
-    // Check balance
     const balanceResult = await this.walletService.getBalance(userId);
     const balance = new Decimal(balanceResult.data.balance);
     const withdrawalAmount = new Decimal(withdrawDto.amount);
@@ -223,6 +247,7 @@ export class BanksService {
     if (balance.lessThan(withdrawalAmount)) {
       throw new BadRequestException('Insufficient balance');
     }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -231,33 +256,30 @@ export class BanksService {
       throw new NotFoundException('User not found');
     }
 
-    // Check NIN verification
     if (!user.ninVerified) {
       throw new ForbiddenException(
         'NIN verification required for withdrawal. Please verify your NIN first.',
       );
     }
 
-    // Verify bank account exists
     const bankAccount = await (this.prisma as any).bankAccount.findFirst({
       where: {
+        id: withdrawDto.bankId,
         userId,
         isVerified: true,
       },
     });
 
     if (!bankAccount) {
-      throw new BadRequestException(
-        'No verified bank account found. Please add a bank account first.',
+      throw new NotFoundException(
+        'Bank account not found or not verified. Please add a valid bank account first.',
       );
     }
 
-    // Generate OTP
     const otp = this.generateOTP();
     const expiresAt = new Date();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiry
+    expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 
-    // Mark any existing unused OTPs as used
     await (this.prisma as any).withdrawalOtp.updateMany({
       where: {
         userId,
@@ -268,24 +290,38 @@ export class BanksService {
       },
     });
 
-    // Create new OTP record
     await (this.prisma as any).withdrawalOtp.create({
       data: {
         userId,
         otp,
+        amount: withdrawalAmount,
+        bankAccountId: bankAccount.id,
         expiresAt,
         used: false,
       },
     });
 
-    // Send OTP via email
-    await this.emailService.sendWithdrawalOTP(user.email, otp);
+    try {
+      await this.emailService.sendWithdrawalOTP(user.email, otp);
+    } catch (error) {
+      this.logger.warn(
+        `Withdrawal OTP email failed for ${user.email}: ${error.message}`,
+      );
+    }
 
     return {
-      message: 'Withdrawal OTP sent to your email. Please check your inbox.',
+      message:
+        'Withdrawal OTP generated. Complete withdrawal with POST /banks/withdrawal/verify-otp.',
       data: {
-        expiresIn: 600, // 10 minutes in seconds
-        ...(process.env.NODE_ENV === 'development' && { otp }), // Only in dev
+        otp,
+        expiresIn: 600,
+        amount: withdrawDto.amount,
+        bankId: bankAccount.id,
+        bankAccount: {
+          accountName: bankAccount.accountName,
+          accountNumber: bankAccount.accountNumber,
+          bankName: bankAccount.bankName,
+        },
       },
     };
   }
@@ -296,7 +332,6 @@ export class BanksService {
   async verifyWithdrawalOtp(
     userId: string,
     verifyOtpDto: VerifyWithdrawalOtpDto,
-    withdrawDto: WithdrawDto,
   ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -306,20 +341,6 @@ export class BanksService {
       throw new NotFoundException('User not found');
     }
 
-    // Get bank account separately
-    const bankAccount = await (this.prisma as any).bankAccount.findFirst({
-      where: {
-        userId,
-        id: verifyOtpDto.bankAccountId,
-        isVerified: true,
-      },
-    });
-
-    if (!bankAccount) {
-      throw new NotFoundException('Bank account not found or not verified');
-    }
-
-    // Find valid OTP
     const withdrawalOtp = await (this.prisma as any).withdrawalOtp.findFirst({
       where: {
         userId,
@@ -338,15 +359,32 @@ export class BanksService {
       throw new BadRequestException('Invalid or expired OTP. Please request a new one.');
     }
 
-    // Validate amount
-    if (withdrawDto.amount <= 0) {
-      throw new BadRequestException('Withdrawal amount must be greater than 0');
+    if (!withdrawalOtp.amount || !withdrawalOtp.bankAccountId) {
+      throw new BadRequestException(
+        'Withdrawal session is incomplete. Please request a new OTP.',
+      );
     }
 
-    // Check balance
+    const bankAccount = await (this.prisma as any).bankAccount.findFirst({
+      where: {
+        id: withdrawalOtp.bankAccountId,
+        userId,
+        isVerified: true,
+      },
+    });
+
+    if (!bankAccount) {
+      throw new NotFoundException('Bank account not found or not verified');
+    }
+
     const balanceCheck = await this.walletService.getBalance(userId);
     const currentBalance = new Decimal(balanceCheck.data.balance);
-    const withdrawalAmount = new Decimal(withdrawDto.amount);
+    const withdrawalAmount = new Decimal(withdrawalOtp.amount);
+    const withdrawAmountNumber = Number(withdrawalOtp.amount);
+
+    if (withdrawalAmount.lte(0)) {
+      throw new BadRequestException('Withdrawal amount must be greater than 0');
+    }
 
     if (currentBalance.lessThan(withdrawalAmount)) {
       throw new BadRequestException('Insufficient balance');
@@ -386,7 +424,7 @@ export class BanksService {
     try {
       transferResponse = await this.paystackService.initiateTransfer(
         bankAccount.paystackRecipientCode,
-        withdrawDto.amount,
+        withdrawAmountNumber,
         `Withdrawal to ${bankAccount.accountName}`,
       );
     } catch (error) {
@@ -416,11 +454,12 @@ export class BanksService {
         type: transferResponse.data.status === 'success' ? 'WITHDRAWAL_PROCESSED' : 'WITHDRAWAL_FAILED',
         title: transferResponse.data.status === 'success' ? 'Withdrawal Processed' : 'Withdrawal Pending',
         message: transferResponse.data.status === 'success'
-          ? `Your withdrawal of ₦${withdrawDto.amount} has been processed`
-          : `Your withdrawal of ₦${withdrawDto.amount} is being processed`,
+          ? `Your withdrawal of ₦${withdrawAmountNumber} has been processed`
+          : `Your withdrawal of ₦${withdrawAmountNumber} is being processed`,
         data: {
           transactionId: withdrawalTx.id,
-          amount: withdrawDto.amount,
+          amount: withdrawAmountNumber,
+          bankId: bankAccount.id,
           transferCode: transferResponse.data.transfer_code,
         },
       },
@@ -430,7 +469,8 @@ export class BanksService {
       message: 'Withdrawal processed successfully',
       data: {
         transactionId: withdrawalTx.id,
-        amount: withdrawDto.amount,
+        amount: withdrawAmountNumber,
+        bankId: bankAccount.id,
         status: transferResponse.data.status === 'success' ? 'COMPLETED' : 'PENDING',
         transferCode: transferResponse.data.transfer_code,
         bankAccount: {

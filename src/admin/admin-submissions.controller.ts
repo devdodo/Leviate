@@ -43,6 +43,18 @@ export class AdminSubmissionsController {
     return this.submissionsService.listSubmissionsForReview(query);
   }
 
+  @Get('task/:taskId/ai-brief')
+  @ApiOperation({
+    summary: 'Get AI brief for a task (submission review)',
+    description:
+      'Returns the task AI-generated brief, LLM context, contributor summary, and related submissions for admin review.',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  async getTaskAiBrief(@Param('taskId') taskId: string) {
+    return this.submissionsService.getTaskAiBriefForAdmin(taskId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get submission detail for review' })
   @ApiResponse({ status: 200, type: BaseResponseDto })

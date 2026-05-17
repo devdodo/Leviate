@@ -187,4 +187,16 @@ export class CreateTaskDto {
   @IsNumber()
   @Min(5)
   budget: number;
+
+  @ApiProperty({
+    required: false,
+    example: 10,
+    minimum: 1,
+    description:
+      'How many contributors will complete this task (total budget is split evenly across this count). Also accepted inside audiencePreferences.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  contributorCount?: number;
 }

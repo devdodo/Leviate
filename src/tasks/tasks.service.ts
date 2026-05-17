@@ -15,6 +15,10 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
 import { TaskStatus, ApplicationStatus, UserType } from '@prisma/client';
+import {
+  contributorNetPayoutAmount,
+  resolveContributorSlotsForPersistence,
+} from '../common/utils/task-payout.util';
 // Temporary workaround: Define enums as const objects until TypeScript server refreshes
 // These enums exist in the Prisma schema and will be available after migration is applied
 const TaskType = {
@@ -153,6 +157,15 @@ export class TasksService {
       llmContext = `Task: ${createTaskDto.title}\n${createTaskDto.description || ''}`;
     }
 
+    const contributorSlots = resolveContributorSlotsForPersistence({
+      explicitContributorCount: createTaskDto.contributorCount,
+      taskType: createTaskDto.taskType,
+      budget: createTaskDto.budget,
+      audiencePreferences: createTaskDto.audiencePreferences,
+      targeting: createTaskDto.targeting,
+    });
+    const grossPerContributor = createTaskDto.budget / contributorSlots;
+
     // Draft only — payment is checked in publishTask(), not here.
     const task = await this.prisma.task.create({
       data: {
@@ -176,7 +189,8 @@ export class TasksService {
         hashtags: createTaskDto.hashtags || [],
         buzzwords: createTaskDto.buzzwords || [],
         budget: createTaskDto.budget,
-        budgetPerTask: createTaskDto.budget,
+        contributorSlots,
+        budgetPerTask: grossPerContributor,
         totalBudget: createTaskDto.budget,
         status,
         aiGeneratedBrief: brief,
@@ -613,42 +627,9 @@ export class TasksService {
     return filteredTasks;
   }
 
-  /**
-   * Planned or assigned contributor headcount used to split task budget for display/payout share.
-   * Uses audiencePreferences / targeting keys when set; otherwise counts assigned applications
-   * (APPROVED/COMPLETED). Minimum 1.
-   */
-  private contributorSlotsForShare(task: any): number {
-    const prefs = (task.audiencePreferences || {}) as Record<string, unknown>;
-    const targeting = (task.targeting || {}) as Record<string, unknown>;
-    const keys = ['contributorCount', 'maxContributors', 'contributorsWanted', 'contributors'];
-    for (const k of keys) {
-      const v = prefs[k] ?? targeting[k];
-      if (v !== undefined && v !== null) {
-        const n = typeof v === 'number' ? v : parseInt(String(v), 10);
-        if (Number.isFinite(n) && n >= 1) {
-          return Math.min(Math.floor(n), 50000);
-        }
-      }
-    }
-
-    const assigned =
-      Array.isArray(task.applications) ? task.applications.length : 0;
-
-    return Math.max(1, assigned || 1);
-  }
-
-  /**
-   * Estimated net amount per contributor: (budget ÷ slots) after platform fee.
-   * Matches proportional split from the creator-funded task budget.
-   */
+  /** Net amount per contributor: (budget ÷ planned slots) after platform fee. */
   private contributorNetPerShare(task: any): number {
-    const gross = Number(task.budget ?? 0);
-    const feePct = Number(task.platformFeePercentage ?? 5);
-    const slots = this.contributorSlotsForShare(task);
-    const perGross = gross / slots;
-    const net = (perGross * (100 - feePct)) / 100;
-    return Math.round(net * 100) / 100;
+    return contributorNetPayoutAmount(task);
   }
 
   /**
@@ -1181,6 +1162,33 @@ export class TasksService {
       updateData.resourceLink = taskCategoryForResource === 'MAKE_POST' ? null : updateTaskDto.resourceLink;
     }
     if (updateTaskDto.budget) updateData.budget = updateTaskDto.budget;
+    if (updateTaskDto.audiencePreferences !== undefined) {
+      updateData.audiencePreferences = updateTaskDto.audiencePreferences;
+    }
+
+    const mergedBudget = updateTaskDto.budget ?? Number((task as any).budget);
+    const mergedPrefs =
+      updateTaskDto.audiencePreferences ?? (task as any).audiencePreferences;
+    const mergedTargeting = updateTaskDto.targeting ?? (task as any).targeting;
+    const slots = resolveContributorSlotsForPersistence({
+      explicitContributorCount: updateTaskDto.contributorCount,
+      contributorSlots: (task as any).contributorSlots,
+      taskType: updateTaskDto.taskType ?? (task as any).taskType,
+      budget: mergedBudget,
+      budgetPerTask: (task as any).budgetPerTask,
+      audiencePreferences: mergedPrefs,
+      targeting: mergedTargeting,
+    });
+    if (
+      updateTaskDto.contributorCount !== undefined ||
+      updateTaskDto.audiencePreferences !== undefined ||
+      updateTaskDto.budget !== undefined
+    ) {
+      updateData.contributorSlots = slots;
+      updateData.budgetPerTask = mergedBudget / slots;
+      updateData.totalBudget = mergedBudget;
+    }
+
     if (updateTaskDto.targeting) updateData.targeting = updateTaskDto.targeting as any;
     if (updateTaskDto.scheduleType) updateData.scheduleType = updateTaskDto.scheduleType;
     if (updateTaskDto.scheduleStart) updateData.scheduleStart = new Date(updateTaskDto.scheduleStart);

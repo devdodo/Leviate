@@ -259,7 +259,7 @@ export class ReferralsService {
         amount: withdrawalAmount,
         balanceAfter: currentBalance.sub(withdrawalAmount),
         transactionCategory: TransactionCategory.WITHDRAWAL,
-        description: `Withdrawal from referral earnings: ${withdrawDto.bankDetails || 'N/A'}`,
+        description: 'Withdrawal from referral earnings',
         status: TransactionStatus.COMPLETED,
       },
     });

@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../common/services/prisma.service';
 import { AIService } from '../common/services/ai.service';
 import { WalletService } from '../wallet/wallet.service';
+import { contributorNetPayoutAmount } from '../common/utils/task-payout.util';
 import { ReputationService } from '../reputation/reputation.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import {
@@ -89,42 +90,6 @@ export class SubmissionsService {
     },
   } satisfies Prisma.TaskSubmissionInclude;
 
-  private contributorSlotsForShare(task: {
-    audiencePreferences?: unknown;
-    targeting?: unknown;
-    applications?: { id: string }[];
-  }): number {
-    const prefs = (task.audiencePreferences || {}) as Record<string, unknown>;
-    const targeting = (task.targeting || {}) as Record<string, unknown>;
-    const keys = ['contributorCount', 'maxContributors', 'contributorsWanted', 'contributors'];
-    for (const k of keys) {
-      const v = prefs[k] ?? targeting[k];
-      if (v !== undefined && v !== null) {
-        const n = typeof v === 'number' ? v : parseInt(String(v), 10);
-        if (Number.isFinite(n) && n >= 1) {
-          return Math.min(Math.floor(n), 50000);
-        }
-      }
-    }
-    const assigned = task.applications?.length ?? 0;
-    return Math.max(1, assigned || 1);
-  }
-
-  private contributorNetPayoutAmount(task: {
-    budget: unknown;
-    platformFeePercentage?: unknown;
-    audiencePreferences?: unknown;
-    targeting?: unknown;
-    applications?: { id: string }[];
-  }): number {
-    const gross = Number(task.budget ?? 0);
-    const feePct = Number(task.platformFeePercentage ?? 5);
-    const slots = this.contributorSlotsForShare(task);
-    const perGross = gross / slots;
-    const net = (perGross * (100 - feePct)) / 100;
-    return Math.round(net * 100) / 100;
-  }
-
   /** Staff review queue (default: pending verification). */
   async listSubmissionsForReview(query: ReviewSubmissionsQueryDto) {
     const page = query.page ?? 1;
@@ -147,7 +112,7 @@ export class SubmissionsService {
 
     const items = submissions.map((s) => ({
       ...s,
-      estimatedPayout: this.contributorNetPayoutAmount(s.task),
+      estimatedPayout: contributorNetPayoutAmount(s.task),
     }));
 
     return {
@@ -173,13 +138,81 @@ export class SubmissionsService {
       throw new NotFoundException('Submission not found');
     }
 
-    const estimatedPayout = this.contributorNetPayoutAmount(submission.task);
+    const estimatedPayout = contributorNetPayoutAmount(submission.task);
 
     return {
       message: 'Submission retrieved successfully',
       data: {
         ...submission,
         estimatedPayout,
+      },
+    };
+  }
+
+  /**
+   * AI brief and task context for staff reviewing submissions for a given task.
+   */
+  async getTaskAiBriefForAdmin(taskId: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        category: true,
+        status: true,
+        taskType: true,
+        contentType: true,
+        platforms: true,
+        hashtags: true,
+        buzzwords: true,
+        commentsInstructions: true,
+        aiGeneratedBrief: true,
+        llmContextFile: true,
+        contributorSummary: true,
+        resourceLink: true,
+        scheduleStart: true,
+        scheduleEnd: true,
+        createdAt: true,
+        submissions: {
+          select: {
+            id: true,
+            verificationStatus: true,
+            taskerId: true,
+            createdAt: true,
+            applicationId: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+
+    return {
+      message: 'Task AI brief retrieved successfully',
+      data: {
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        category: task.category,
+        status: task.status,
+        taskType: task.taskType,
+        contentType: task.contentType,
+        platforms: task.platforms,
+        hashtags: task.hashtags,
+        buzzwords: task.buzzwords,
+        commentsInstructions: task.commentsInstructions,
+        resourceLink: task.resourceLink,
+        scheduleStart: task.scheduleStart,
+        scheduleEnd: task.scheduleEnd,
+        createdAt: task.createdAt,
+        aiBrief: task.aiGeneratedBrief,
+        llmContextFile: task.llmContextFile,
+        contributorSummary: task.contributorSummary,
+        submissions: task.submissions,
       },
     };
   }
@@ -628,23 +661,13 @@ export class SubmissionsService {
 
     const task = await this.prisma.task.findUnique({
       where: { id: submission.taskId },
-      include: {
-        applications: {
-          where: {
-            status: {
-              in: [ApplicationStatus.APPROVED, ApplicationStatus.COMPLETED],
-            },
-          },
-          select: { id: true },
-        },
-      },
     });
 
     if (!task) {
       throw new NotFoundException('Task not found for payout');
     }
 
-    const taskerAmount = this.contributorNetPayoutAmount(task);
+    const taskerAmount = contributorNetPayoutAmount(task);
 
     if (taskerAmount <= 0) {
       throw new BadRequestException('Task payout amount is invalid');
