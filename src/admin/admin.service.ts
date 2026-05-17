@@ -8,7 +8,7 @@ import {
 import { PrismaService } from '../common/services/prisma.service';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
-import { UserStatus, AdminActionType, UserRole } from '@prisma/client';
+import { UserStatus, AdminActionType, UserRole, UserType } from '@prisma/client';
 
 // Type guard to ensure SUPERADMIN is recognized
 const SUPERADMIN_ROLE = 'SUPERADMIN' as UserRole;
@@ -332,17 +332,24 @@ export class AdminService {
     // Generate unique referral code
     const referralCode = this.generateReferralCode();
 
-    // Create admin user
+    if (
+      createAdminDto.role !== UserRole.ADMIN &&
+      createAdminDto.role !== UserRole.SUPERADMIN
+    ) {
+      throw new BadRequestException('role must be ADMIN or SUPERADMIN');
+    }
+
+    // Staff accounts are approvers (submission review), not creators/contributors
     const admin = await this.prisma.user.create({
       data: {
         email: createAdminDto.email,
         passwordHash,
         role: createAdminDto.role,
-        userType: createAdminDto.userType || 'CREATOR',
-        emailVerified: true, // Admins don't need email verification
-        profileComplete: true, // Admins are considered complete
+        userType: UserType.APPROVER,
+        emailVerified: true,
+        profileComplete: true,
         referralCode,
-        reputationScore: 100, // Admins start with max reputation
+        reputationScore: 100,
       },
       select: {
         id: true,

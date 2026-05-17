@@ -13,7 +13,8 @@ import {
   Prisma,
   VerificationStatus,
   ApplicationStatus,
-  TaskStatus,
+  UserRole,
+  UserType,
 } from '@prisma/client';
 
 @Injectable()
@@ -40,8 +41,20 @@ export class SubmissionsService {
     return '';
   }
 
+  private isStaffRole(role: string | undefined): boolean {
+    return role === UserRole.ADMIN || role === UserRole.SUPERADMIN;
+  }
+
   async createSubmission(userId: string, createSubmissionDto: CreateSubmissionDto) {
     const { taskId, applicationId, proof, notes } = createSubmissionDto;
+
+    const submitter = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { userType: true },
+    });
+    if (!submitter || submitter.userType !== UserType.CONTRIBUTOR) {
+      throw new ForbiddenException('Only contributors can submit task proof');
+    }
 
     // Verify application belongs to user
     const application = await this.prisma.taskApplication.findUnique({
@@ -191,6 +204,14 @@ export class SubmissionsService {
   }
 
   async verifySubmission(id: string, adminUserId: string, comment?: string) {
+    const approver = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { role: true, userType: true },
+    });
+    if (!approver || !this.isStaffRole(approver.role)) {
+      throw new ForbiddenException('Only admin or super admin can approve submissions');
+    }
+
     const submission = await this.prisma.taskSubmission.findUnique({
       where: { id },
       include: { task: true },
@@ -200,12 +221,19 @@ export class SubmissionsService {
       throw new NotFoundException('Submission not found');
     }
 
-    await this.prisma.taskSubmission.update({
+    if (submission.verificationStatus === VerificationStatus.VERIFIED) {
+      throw new BadRequestException('Submission is already verified');
+    }
+
+    const updated = await this.prisma.taskSubmission.update({
       where: { id },
       data: {
         verificationStatus: VerificationStatus.VERIFIED,
         verifiedAt: new Date(),
+        verifiedById: adminUserId,
+        adminComment: comment ?? null,
       },
+      include: { task: true },
     });
 
     await this.prisma.adminAction.create({
@@ -213,19 +241,44 @@ export class SubmissionsService {
         adminId: adminUserId,
         actionType: 'OVERRIDE_VERIFICATION',
         targetTaskId: submission.taskId,
-        reason: comment ?? 'Submission verified by admin',
+        reason: comment ?? 'Submission approved by staff',
       },
     });
 
-    await this.processPayout(submission);
+    await this.processPayout(updated);
+
+    await this.prisma.notification.create({
+      data: {
+        receiverId: updated.taskerId,
+        type: 'SUBMISSION_VERIFIED',
+        title: 'Submission approved',
+        message: `Your submission for "${updated.task.title}" was approved. Payout has been credited to your wallet.`,
+        data: {
+          taskId: updated.taskId,
+          submissionId: id,
+        },
+      },
+    });
 
     return {
-      message: 'Submission verified successfully',
-      data: { submissionId: id, status: VerificationStatus.VERIFIED },
+      message: 'Submission approved and contributor credited successfully',
+      data: {
+        submissionId: id,
+        status: VerificationStatus.VERIFIED,
+        verifiedById: adminUserId,
+      },
     };
   }
 
   async rejectSubmission(id: string, adminUserId: string, comment: string) {
+    const approver = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { role: true },
+    });
+    if (!approver || !this.isStaffRole(approver.role)) {
+      throw new ForbiddenException('Only admin or super admin can reject submissions');
+    }
+
     const submission = await this.prisma.taskSubmission.findUnique({
       where: { id },
       include: { task: true },
@@ -235,10 +288,17 @@ export class SubmissionsService {
       throw new NotFoundException('Submission not found');
     }
 
+    if (submission.verificationStatus === VerificationStatus.VERIFIED) {
+      throw new BadRequestException('Cannot reject an already verified submission');
+    }
+
     await this.prisma.taskSubmission.update({
       where: { id },
       data: {
         verificationStatus: VerificationStatus.REJECTED,
+        rejectedAt: new Date(),
+        verifiedById: adminUserId,
+        adminComment: comment,
       },
     });
 
@@ -267,7 +327,7 @@ export class SubmissionsService {
     };
   }
 
-  async getSubmission(id: string, userId: string) {
+  async getSubmission(id: string, userId: string, userRole?: string) {
     const submission = await this.prisma.taskSubmission.findUnique({
       where: { id },
       include: {
@@ -299,8 +359,9 @@ export class SubmissionsService {
       throw new NotFoundException('Submission not found');
     }
 
-    // Only creator or tasker can view
+    const isStaff = this.isStaffRole(userRole);
     if (
+      !isStaff &&
       submission.task.creatorId !== userId &&
       submission.taskerId !== userId
     ) {

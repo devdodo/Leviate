@@ -126,7 +126,11 @@ export class AdminController {
 
   @Post('create-admin')
   @UseGuards(SuperAdminGuard)
-  @ApiOperation({ summary: 'Create new admin or superadmin (SuperAdmin only)' })
+  @ApiOperation({
+    summary: 'Create staff approver account (SuperAdmin only)',
+    description:
+      'Creates an ADMIN or SUPERADMIN with userType APPROVER for reviewing submissions and triggering contributor payouts on verify.',
+  })
   @ApiResponse({
     status: 201,
     description: 'Admin created successfully',

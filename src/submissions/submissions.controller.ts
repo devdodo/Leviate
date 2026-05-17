@@ -42,13 +42,17 @@ export class SubmissionsController {
     type: BaseResponseDto,
   })
   async getSubmission(@CurrentUser() user: any, @Param('id') id: string) {
-    return this.submissionsService.getSubmission(id, user.id);
+    return this.submissionsService.getSubmission(id, user.id, user.role);
   }
 
   @Post(':id/verify')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Verify submission as complete (Admin only)' })
+  @ApiOperation({
+    summary: 'Approve submission (Admin or SuperAdmin)',
+    description:
+      'Marks submission verified, records approver, and credits the contributor wallet.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Submission verified successfully',
@@ -65,7 +69,7 @@ export class SubmissionsController {
   @Post(':id/reject')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Reject submission with feedback (Admin only)' })
+  @ApiOperation({ summary: 'Reject submission with feedback (Admin or SuperAdmin)' })
   @ApiResponse({
     status: 200,
     description: 'Submission rejected successfully',
@@ -82,7 +86,7 @@ export class SubmissionsController {
   @Get('pending/review')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'Get all pending submissions for admin review' })
+  @ApiOperation({ summary: 'List pending submissions for approver review (Admin or SuperAdmin)' })
   @ApiResponse({
     status: 200,
     description: 'Pending submissions retrieved successfully',

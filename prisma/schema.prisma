@@ -17,6 +17,7 @@ datasource db {
 enum UserType {
   CREATOR
   CONTRIBUTOR
+  APPROVER // Staff who review submissions (paired with ADMIN / SUPERADMIN role)
 }
 
 enum UserStatus {

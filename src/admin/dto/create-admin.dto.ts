@@ -1,6 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, IsNotEmpty, IsEnum, MinLength } from 'class-validator';
-import { UserRole, UserType } from '@prisma/client';
+import { IsEmail, IsString, IsNotEmpty, IsIn, MinLength } from 'class-validator';
+import { UserRole } from '@prisma/client';
+
+const STAFF_ROLES = [UserRole.ADMIN, UserRole.SUPERADMIN] as const;
 
 export class CreateAdminDto {
   @ApiProperty({ example: 'admin@leviateapp.com', description: 'Admin email address' })
@@ -14,22 +16,13 @@ export class CreateAdminDto {
   @MinLength(8)
   password: string;
 
-  @ApiProperty({ 
-    example: 'ADMIN', 
-    description: 'Admin role (ADMIN or SUPERADMIN)',
-    enum: UserRole
+  @ApiProperty({
+    example: 'ADMIN',
+    description:
+      'Staff role: ADMIN (approve/reject submissions) or SUPERADMIN (same + manage admins)',
+    enum: STAFF_ROLES,
   })
-  @IsEnum(UserRole)
+  @IsIn(STAFF_ROLES)
   @IsNotEmpty()
-  role: UserRole;
-
-  @ApiProperty({ 
-    example: 'CREATOR', 
-    description: 'User type (CREATOR or CONTRIBUTOR)',
-    enum: ['CREATOR', 'CONTRIBUTOR'],
-    required: false
-  })
-  @IsEnum(['CREATOR', 'CONTRIBUTOR'])
-  userType?: UserType;
+  role: (typeof STAFF_ROLES)[number];
 }
-

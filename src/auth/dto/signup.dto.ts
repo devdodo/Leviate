@@ -1,6 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength, IsEnum, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsIn, IsOptional } from 'class-validator';
 import { UserType } from '@prisma/client';
+
+/** Public signup only — staff use admin seed / create-admin. */
+const SIGNUP_USER_TYPES = [UserType.CREATOR, UserType.CONTRIBUTOR] as const;
 
 export class SignupDto {
   @ApiProperty({
@@ -20,12 +23,12 @@ export class SignupDto {
   password: string;
 
   @ApiProperty({
-    enum: UserType,
+    enum: SIGNUP_USER_TYPES,
     example: UserType.CREATOR,
     description: 'User type: CREATOR (posts tasks) or CONTRIBUTOR (completes tasks)',
   })
-  @IsEnum(UserType)
-  userType: UserType;
+  @IsIn(SIGNUP_USER_TYPES)
+  userType: (typeof SIGNUP_USER_TYPES)[number];
 
   @ApiProperty({
     example: 'ABC12345',
