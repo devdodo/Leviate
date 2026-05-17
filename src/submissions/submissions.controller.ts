@@ -34,6 +34,28 @@ export class SubmissionsController {
     return this.submissionsService.createSubmission(user.id, createSubmissionDto);
   }
 
+  @Get('pending/review')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({
+    summary: 'List pending submissions (legacy)',
+    description: 'Prefer GET /api/admin/submissions for the review queue.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Pending submissions retrieved successfully',
+    type: BaseResponseDto,
+  })
+  async getPendingSubmissions(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.submissionsService.listSubmissionsForReview({
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get submission by ID' })
   @ApiResponse({
@@ -81,25 +103,6 @@ export class SubmissionsController {
     @Body() body: { comment: string },
   ) {
     return this.submissionsService.rejectSubmission(id, user.id, body.comment);
-  }
-
-  @Get('pending/review')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
-  @ApiOperation({ summary: 'List pending submissions for approver review (Admin or SuperAdmin)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Pending submissions retrieved successfully',
-    type: BaseResponseDto,
-  })
-  async getPendingSubmissions(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.submissionsService.getPendingSubmissions(
-      page ? parseInt(page) : 1,
-      limit ? parseInt(limit) : 20,
-    );
   }
 }
 

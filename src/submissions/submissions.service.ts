@@ -15,7 +15,10 @@ import {
   ApplicationStatus,
   UserRole,
   UserType,
+  TransactionCategory,
+  TransactionStatus,
 } from '@prisma/client';
+import { ReviewSubmissionsQueryDto } from './dto/review-submissions-query.dto';
 
 @Injectable()
 export class SubmissionsService {
@@ -43,6 +46,142 @@ export class SubmissionsService {
 
   private isStaffRole(role: string | undefined): boolean {
     return role === UserRole.ADMIN || role === UserRole.SUPERADMIN;
+  }
+
+  private readonly submissionReviewInclude = {
+    task: {
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        status: true,
+        budget: true,
+        platformFeePercentage: true,
+        audiencePreferences: true,
+        targeting: true,
+        scheduleEnd: true,
+        applications: {
+          where: {
+            status: {
+              in: [ApplicationStatus.APPROVED, ApplicationStatus.COMPLETED],
+            },
+          },
+          select: { id: true },
+        },
+      },
+    },
+    application: {
+      include: {
+        tasker: {
+          select: {
+            id: true,
+            email: true,
+            reputationScore: true,
+            profile: {
+              select: { firstName: true, lastName: true },
+            },
+          },
+        },
+      },
+    },
+    verifiedBy: {
+      select: { id: true, email: true },
+    },
+  } satisfies Prisma.TaskSubmissionInclude;
+
+  private contributorSlotsForShare(task: {
+    audiencePreferences?: unknown;
+    targeting?: unknown;
+    applications?: { id: string }[];
+  }): number {
+    const prefs = (task.audiencePreferences || {}) as Record<string, unknown>;
+    const targeting = (task.targeting || {}) as Record<string, unknown>;
+    const keys = ['contributorCount', 'maxContributors', 'contributorsWanted', 'contributors'];
+    for (const k of keys) {
+      const v = prefs[k] ?? targeting[k];
+      if (v !== undefined && v !== null) {
+        const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+        if (Number.isFinite(n) && n >= 1) {
+          return Math.min(Math.floor(n), 50000);
+        }
+      }
+    }
+    const assigned = task.applications?.length ?? 0;
+    return Math.max(1, assigned || 1);
+  }
+
+  private contributorNetPayoutAmount(task: {
+    budget: unknown;
+    platformFeePercentage?: unknown;
+    audiencePreferences?: unknown;
+    targeting?: unknown;
+    applications?: { id: string }[];
+  }): number {
+    const gross = Number(task.budget ?? 0);
+    const feePct = Number(task.platformFeePercentage ?? 5);
+    const slots = this.contributorSlotsForShare(task);
+    const perGross = gross / slots;
+    const net = (perGross * (100 - feePct)) / 100;
+    return Math.round(net * 100) / 100;
+  }
+
+  /** Staff review queue (default: pending verification). */
+  async listSubmissionsForReview(query: ReviewSubmissionsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+    const status = query.status ?? VerificationStatus.PENDING;
+
+    const where: Prisma.TaskSubmissionWhereInput = { verificationStatus: status };
+
+    const [submissions, total] = await Promise.all([
+      this.prisma.taskSubmission.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: this.submissionReviewInclude,
+      }),
+      this.prisma.taskSubmission.count({ where }),
+    ]);
+
+    const items = submissions.map((s) => ({
+      ...s,
+      estimatedPayout: this.contributorNetPayoutAmount(s.task),
+    }));
+
+    return {
+      message: 'Submissions retrieved successfully',
+      data: { submissions: items },
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        status,
+      },
+    };
+  }
+
+  async getSubmissionForReview(id: string) {
+    const submission = await this.prisma.taskSubmission.findUnique({
+      where: { id },
+      include: this.submissionReviewInclude,
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Submission not found');
+    }
+
+    const estimatedPayout = this.contributorNetPayoutAmount(submission.task);
+
+    return {
+      message: 'Submission retrieved successfully',
+      data: {
+        ...submission,
+        estimatedPayout,
+      },
+    };
   }
 
   async createSubmission(userId: string, createSubmissionDto: CreateSubmissionDto) {
@@ -224,6 +363,9 @@ export class SubmissionsService {
     if (submission.verificationStatus === VerificationStatus.VERIFIED) {
       throw new BadRequestException('Submission is already verified');
     }
+    if (submission.verificationStatus === VerificationStatus.REJECTED) {
+      throw new BadRequestException('Cannot approve a rejected submission');
+    }
 
     const updated = await this.prisma.taskSubmission.update({
       where: { id },
@@ -245,17 +387,18 @@ export class SubmissionsService {
       },
     });
 
-    await this.processPayout(updated);
+    const payoutAmount = await this.processPayout(updated);
 
     await this.prisma.notification.create({
       data: {
         receiverId: updated.taskerId,
         type: 'SUBMISSION_VERIFIED',
         title: 'Submission approved',
-        message: `Your submission for "${updated.task.title}" was approved. Payout has been credited to your wallet.`,
+        message: `Your submission for "${updated.task.title}" was approved. ₦${payoutAmount} has been credited to your wallet.`,
         data: {
           taskId: updated.taskId,
           submissionId: id,
+          amount: payoutAmount,
         },
       },
     });
@@ -266,6 +409,7 @@ export class SubmissionsService {
         submissionId: id,
         status: VerificationStatus.VERIFIED,
         verifiedById: adminUserId,
+        payoutAmount,
       },
     };
   }
@@ -291,6 +435,9 @@ export class SubmissionsService {
     if (submission.verificationStatus === VerificationStatus.VERIFIED) {
       throw new BadRequestException('Cannot reject an already verified submission');
     }
+    if (submission.verificationStatus === VerificationStatus.REJECTED) {
+      throw new BadRequestException('Submission is already rejected');
+    }
 
     await this.prisma.taskSubmission.update({
       where: { id },
@@ -300,6 +447,11 @@ export class SubmissionsService {
         verifiedById: adminUserId,
         adminComment: comment,
       },
+    });
+
+    await this.prisma.taskApplication.update({
+      where: { id: submission.applicationId },
+      data: { status: ApplicationStatus.APPROVED },
     });
 
     await this.prisma.adminAction.create({
@@ -457,25 +609,47 @@ export class SubmissionsService {
     }
   }
 
-  private async processPayout(submission: any) {
+  private async processPayout(submission: {
+    id: string;
+    taskId: string;
+    taskerId: string;
+    task?: { title: string };
+  }): Promise<number> {
+    const existingPayout = await this.prisma.walletTransaction.findFirst({
+      where: {
+        referenceId: submission.id,
+        transactionCategory: TransactionCategory.TASK_PAYOUT,
+        status: TransactionStatus.COMPLETED,
+      },
+    });
+    if (existingPayout) {
+      return Number(existingPayout.amount);
+    }
+
     const task = await this.prisma.task.findUnique({
       where: { id: submission.taskId },
+      include: {
+        applications: {
+          where: {
+            status: {
+              in: [ApplicationStatus.APPROVED, ApplicationStatus.COMPLETED],
+            },
+          },
+          select: { id: true },
+        },
+      },
     });
 
-    if (!task) return;
+    if (!task) {
+      throw new NotFoundException('Task not found for payout');
+    }
 
-    // Use the new budget field (single budget amount)
-    const taskData = task as any;
-    const totalBudget = Number(taskData.budget || 0);
-    
-    // For SINGLE tasks, the full budget goes to one contributor
-    // For MULTI tasks, budget is split (for now, we'll use full amount - can be enhanced)
-    const payoutAmount = totalBudget;
-    const platformFeePercentage = Number(task.platformFeePercentage || 5);
-    const platformFee = (payoutAmount * platformFeePercentage) / 100;
-    const taskerAmount = payoutAmount - platformFee;
+    const taskerAmount = this.contributorNetPayoutAmount(task);
 
-    // Credit tasker wallet
+    if (taskerAmount <= 0) {
+      throw new BadRequestException('Task payout amount is invalid');
+    }
+
     await this.walletService.credit(
       submission.taskerId,
       taskerAmount,
@@ -484,14 +658,12 @@ export class SubmissionsService {
       { referenceId: submission.id, taskId: task.id, submissionId: submission.id },
     );
 
-    // Increase reputation
     await this.reputationService.increaseReputation(
       submission.taskerId,
       5,
       'Task completed and verified',
     );
 
-    // Create notification
     await this.prisma.notification.create({
       data: {
         receiverId: submission.taskerId,
@@ -505,6 +677,8 @@ export class SubmissionsService {
         },
       },
     });
+
+    return taskerAmount;
   }
 
   async overrideVerification(
