@@ -290,7 +290,7 @@ export class BanksService {
       },
     });
 
-    await (this.prisma as any).withdrawalOtp.create({
+    const withdrawalRequest = await (this.prisma as any).withdrawalOtp.create({
       data: {
         userId,
         otp,
@@ -313,6 +313,7 @@ export class BanksService {
       message:
         'Withdrawal OTP generated. Complete withdrawal with POST /banks/withdrawal/verify-otp.',
       data: {
+        withdrawalRequestId: withdrawalRequest.id,
         otp,
         expiresIn: 600,
         amount: withdrawDto.amount,
@@ -343,6 +344,7 @@ export class BanksService {
 
     const withdrawalOtp = await (this.prisma as any).withdrawalOtp.findFirst({
       where: {
+        id: verifyOtpDto.withdrawalRequestId,
         userId,
         otp: verifyOtpDto.otp,
         used: false,
@@ -350,13 +352,12 @@ export class BanksService {
           gt: new Date(),
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
     });
 
     if (!withdrawalOtp) {
-      throw new BadRequestException('Invalid or expired OTP. Please request a new one.');
+      throw new BadRequestException(
+        'Invalid or expired withdrawal request. Check withdrawalRequestId and OTP, or request a new one.',
+      );
     }
 
     if (!withdrawalOtp.amount || !withdrawalOtp.bankAccountId) {

@@ -114,6 +114,8 @@ export class BanksController {
   @Post('withdrawal/verify-otp')
   @ApiOperation({
     summary: 'Verify withdrawal OTP and send funds to the bank from request-otp',
+    description:
+      'Pass withdrawalRequestId and otp from the request-otp response. Amount and bank are loaded from that stored request.',
   })
   @ApiResponse({
     status: 200,
