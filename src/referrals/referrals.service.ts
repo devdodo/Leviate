@@ -2,7 +2,6 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -242,13 +241,6 @@ export class ReferralsService {
     // Check overall balance (must have enough in main wallet too)
     if (currentBalance.lessThan(withdrawalAmount)) {
       throw new BadRequestException('Insufficient balance in main wallet');
-    }
-
-    // Check NIN verification
-    if (!user.ninVerified) {
-      throw new ForbiddenException(
-        'NIN verification required for withdrawal. Please verify your NIN first.',
-      );
     }
 
     // Create withdrawal transaction with reference to referral

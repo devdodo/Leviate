@@ -3,7 +3,6 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { PaystackService } from '../common/services/paystack.service';
@@ -254,12 +253,6 @@ export class BanksService {
 
     if (!user) {
       throw new NotFoundException('User not found');
-    }
-
-    if (!user.ninVerified) {
-      throw new ForbiddenException(
-        'NIN verification required for withdrawal. Please verify your NIN first.',
-      );
     }
 
     const bankAccount = await (this.prisma as any).bankAccount.findFirst({
