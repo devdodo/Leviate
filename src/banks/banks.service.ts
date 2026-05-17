@@ -459,14 +459,19 @@ export class BanksService {
       },
     });
 
+    const paystackMocked = this.paystackService.isMockTransfersEnabled();
+
     return {
-      message: 'Withdrawal processed successfully',
+      message: paystackMocked
+        ? 'Withdrawal recorded successfully (Paystack transfer mocked — no real bank payout)'
+        : 'Withdrawal processed successfully',
       data: {
         transactionId: withdrawalTx.id,
         amount: withdrawAmountNumber,
         bankId: bankAccount.id,
         status: transferResponse.data.status === 'success' ? 'COMPLETED' : 'PENDING',
         transferCode: transferResponse.data.transfer_code,
+        paystackMocked,
         bankAccount: {
           accountName: bankAccount.accountName,
           accountNumber: bankAccount.accountNumber,

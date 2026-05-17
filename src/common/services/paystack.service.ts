@@ -74,13 +74,33 @@ export class PaystackService {
   private readonly logger = new Logger(PaystackService.name);
   private readonly secretKey: string;
   private readonly baseUrl = 'https://api.paystack.co';
+  private readonly mockTransfers: boolean;
 
   constructor(private configService: ConfigService) {
     const raw = this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
     this.secretKey = PaystackService.normalizeSecretKey(raw);
+    this.mockTransfers = PaystackService.isTruthy(
+      this.configService.get<string>('PAYSTACK_MOCK_TRANSFERS'),
+    );
     if (!this.secretKey) {
       this.logger.warn('PAYSTACK_SECRET_KEY not set. Paystack operations will fail.');
     }
+    if (this.mockTransfers) {
+      this.logger.warn(
+        'PAYSTACK_MOCK_TRANSFERS is enabled — withdrawals use simulated Paystack success (no real payout).',
+      );
+    }
+  }
+
+  /** When true, transfer/recipient calls return success without calling Paystack. */
+  isMockTransfersEnabled(): boolean {
+    return this.mockTransfers;
+  }
+
+  private static isTruthy(value: string | undefined): boolean {
+    if (!value) return false;
+    const v = value.trim().toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes';
   }
 
   /** Trim, strip wrapping quotes, remove accidental "Bearer " prefix. */
@@ -173,6 +193,37 @@ export class PaystackService {
     bankCode: string,
     accountName: string,
   ): Promise<PaystackTransferRecipientResponse> {
+    if (this.mockTransfers) {
+      const recipientCode = `MOCK_RCP_${bankCode}_${accountNumber}_${Date.now()}`;
+      this.logger.log(
+        `Mock transfer recipient created: ${recipientCode} (${accountName})`,
+      );
+      return {
+        status: true,
+        message: 'Transfer recipient created (mocked)',
+        data: {
+          active: true,
+          createdAt: new Date().toISOString(),
+          currency: 'NGN',
+          domain: 'mock',
+          id: 0,
+          integration: 0,
+          name: accountName,
+          recipient_code: recipientCode,
+          type: 'nuban',
+          updatedAt: new Date().toISOString(),
+          is_deleted: false,
+          details: {
+            authorization_code: null,
+            account_number: accountNumber,
+            account_name: accountName,
+            bank_code: bankCode,
+            bank_name: 'Mock Bank',
+          },
+        },
+      };
+    }
+
     const response = await this.makeRequest<PaystackTransferRecipientResponse>(
       '/transferrecipient',
       'POST',
@@ -192,9 +243,34 @@ export class PaystackService {
    */
   async initiateTransfer(
     recipientCode: string,
-    amount: number, // Amount in kobo (multiply by 100)
+    amount: number, // Amount in Naira
     reason?: string,
   ): Promise<PaystackTransferResponse> {
+    if (this.mockTransfers) {
+      const transferCode = `MOCK_TRF_${Date.now()}`;
+      this.logger.log(
+        `Mock transfer success: ${transferCode} ₦${amount} → ${recipientCode}`,
+      );
+      return {
+        status: true,
+        message: 'Transfer successful (mocked — no funds sent via Paystack)',
+        data: {
+          integration: 0,
+          domain: 'mock',
+          amount: amount * 100,
+          currency: 'NGN',
+          source: 'balance',
+          reason: reason || 'Withdrawal',
+          recipient: 0,
+          status: 'success',
+          transfer_code: transferCode,
+          id: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    }
+
     const response = await this.makeRequest<PaystackTransferResponse>(
       '/transfer',
       'POST',
