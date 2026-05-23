@@ -5,10 +5,24 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const HOBBIES_INTERESTS_COOLDOWN_DAYS = 30;
 export const SOCIAL_MEDIA_HANDLES_COOLDOWN_DAYS = 90;
 
-/** When false (default), social handle updates are not cooldown-gated (testing). */
+/**
+ * Social handle 90-day cooldown (profile + link-social).
+ * Disabled for testing — set to true and use PROFILE_SOCIAL_HANDLES_COOLDOWN_ENABLED=true in .env for production.
+ */
 export function isSocialMediaHandlesCooldownEnabled(): boolean {
-  const raw = process.env.PROFILE_SOCIAL_HANDLES_COOLDOWN_ENABLED?.trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes';
+  const testingBypass =
+    process.env.PROFILE_SOCIAL_HANDLES_COOLDOWN_DISABLED?.trim().toLowerCase();
+  if (
+    testingBypass === '1' ||
+    testingBypass === 'true' ||
+    testingBypass === 'yes'
+  ) {
+    return false;
+  }
+
+  const enabled =
+    process.env.PROFILE_SOCIAL_HANDLES_COOLDOWN_ENABLED?.trim().toLowerCase();
+  return enabled === '1' || enabled === 'true' || enabled === 'yes';
 }
 
 type ProfileCooldownFields = {
