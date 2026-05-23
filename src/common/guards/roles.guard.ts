@@ -1,9 +1,12 @@
-import { Injectable, CanActivate, ExecutionContext, SetMetadata } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
-
-export const ROLES_KEY = 'roles';
-export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);
+import { ROLES_KEY } from '../decorators/roles.decorator';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -15,12 +18,18 @@ export class RolesGuard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
 
-    if (!requiredRoles) {
+    if (!requiredRoles?.length) {
       return true;
     }
 
     const { user } = context.switchToHttp().getRequest();
-    return requiredRoles.some((role) => user?.role === role);
+    if (!user?.role || !requiredRoles.includes(user.role as UserRole)) {
+      throw new ForbiddenException(
+        'This endpoint is only available to administrators.',
+      );
+    }
+
+    return true;
   }
 }
 

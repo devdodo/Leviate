@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   AdminActionType,
   SocialVerificationStatus,
@@ -25,7 +26,20 @@ type ProfileHandles = Record<string, string | undefined>;
 
 @Injectable()
 export class SocialVerificationService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private configService: ConfigService,
+  ) {}
+
+  private getVerificationContact(): { platform: string; handle: string } {
+    const platform =
+      this.configService.get<string>('SOCIAL_VERIFICATION_CONTACT_PLATFORM')?.trim() ||
+      'Instagram';
+    const handle =
+      this.configService.get<string>('SOCIAL_VERIFICATION_CONTACT_HANDLE')?.trim() ||
+      '@leviateapp';
+    return { platform, handle };
+  }
 
   /** Personal code created at registration — same code for every platform for this user. */
   async getUserSocialVerificationCode(userId: string): Promise<string> {
@@ -51,15 +65,21 @@ export class SocialVerificationService {
 
   async getInstructions(userId: string) {
     const verificationCode = await this.getUserSocialVerificationCode(userId);
+    const contact = this.getVerificationContact();
+    const contactLabel = `${contact.platform} ${contact.handle}`;
+
     return {
       message: 'Social verification instructions retrieved successfully',
       data: {
         verificationCode,
+        contactPlatform: contact.platform,
+        contactHandle: contact.handle,
         instructions: [
-          `This code is unique to your account and was created when you registered.`,
-          `Link a social account (POST /api/users/link-social), then add this code to that platform's public bio: ${verificationCode}`,
-          `Submit with POST /api/users/social-verification/submit for each platform you want verified.`,
-          `Use the same code on every platform — our team verifies each account separately.`,
+          `Your personal verification code is ${verificationCode}. This code is unique to your account.`,
+          `Link the social account you want verified in your profile settings.`,
+          `Send us a message on ${contactLabel} with your verification code (${verificationCode}).`,
+          `Our team will manually check your account and approve each platform.`,
+          `Use the same code for every platform you want verified.`,
         ],
       },
     };
@@ -171,7 +191,7 @@ export class SocialVerificationService {
     const handle = handles[platform]?.trim();
     if (!handle) {
       throw new BadRequestException(
-        `Link your ${platform} account first (POST /api/users/link-social).`,
+        `Link your ${platform} account in your profile before submitting verification.`,
       );
     }
 
@@ -181,7 +201,7 @@ export class SocialVerificationService {
       normalizeSubmittedSocialCode(expectedCode)
     ) {
       throw new BadRequestException(
-        'Submitted code does not match your account verification code. Use GET /api/users/social-verification/instructions to see your code.',
+        'Submitted code does not match your personal verification code.',
       );
     }
 
@@ -218,6 +238,63 @@ export class SocialVerificationService {
         submittedAt: record.submittedAt,
       },
     };
+  }
+
+  /**
+   * After profile social update: queue admin review (PENDING) only for platforms
+   * whose handle actually changed. Unchanged platforms are left as-is.
+   */
+  async queueAdminReviewForChangedSocialHandles(
+    userId: string,
+    previousHandles: ProfileHandles | null | undefined,
+    nextHandles: ProfileHandles,
+  ): Promise<string[]> {
+    const prev = previousHandles || {};
+    const verificationCode = await this.getUserSocialVerificationCode(userId);
+    const queuedPlatforms: string[] = [];
+
+    for (const platform of SOCIAL_PLATFORMS) {
+      const oldHandle = (prev[platform] ?? '').trim();
+      const newHandle = (nextHandles[platform] ?? '').trim();
+
+      if (oldHandle.toLowerCase() === newHandle.toLowerCase()) {
+        continue;
+      }
+
+      if (!newHandle) {
+        await this.prisma.userSocialVerification.deleteMany({
+          where: { userId, platform },
+        });
+        continue;
+      }
+
+      await this.prisma.userSocialVerification.upsert({
+        where: {
+          userId_platform: { userId, platform },
+        },
+        create: {
+          userId,
+          platform,
+          handle: newHandle,
+          submittedCode: verificationCode,
+          status: SocialVerificationStatus.PENDING,
+          submittedAt: new Date(),
+        },
+        update: {
+          handle: newHandle,
+          submittedCode: verificationCode,
+          status: SocialVerificationStatus.PENDING,
+          submittedAt: new Date(),
+          reviewedAt: null,
+          reviewedById: null,
+          adminComment: null,
+        },
+      });
+
+      queuedPlatforms.push(platform);
+    }
+
+    return queuedPlatforms;
   }
 
   /** Called when a user links or updates a social handle. */

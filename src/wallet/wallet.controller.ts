@@ -7,6 +7,9 @@ import {
 } from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { UserTypesGuard } from '../common/guards/user-types.guard';
+import { UserTypes } from '../common/decorators/user-types.decorator';
+import { UserType } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { WithdrawDto } from './dto/withdraw.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
@@ -14,7 +17,8 @@ import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Wallet')
 @Controller('wallet')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, UserTypesGuard)
+@UserTypes(UserType.CREATOR, UserType.CONTRIBUTOR)
 @ApiBearerAuth('JWT-auth')
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}

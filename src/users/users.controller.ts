@@ -20,6 +20,9 @@ import {
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { UserTypesGuard } from '../common/guards/user-types.guard';
+import { UserTypes } from '../common/decorators/user-types.decorator';
+import { UserType } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OnboardingDto } from './dto/onboarding.dto';
@@ -32,7 +35,8 @@ import { SubmitSocialVerificationDto } from './dto/submit-social-verification.dt
 
 @ApiTags('Users')
 @Controller('users')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, UserTypesGuard)
+@UserTypes(UserType.CREATOR, UserType.CONTRIBUTOR)
 @ApiBearerAuth('JWT-auth')
 export class UsersController {
   constructor(

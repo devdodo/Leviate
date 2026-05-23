@@ -16,6 +16,9 @@ import {
 } from '@nestjs/swagger';
 import { BanksService } from './banks.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { UserTypesGuard } from '../common/guards/user-types.guard';
+import { UserTypes } from '../common/decorators/user-types.decorator';
+import { UserType } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AddBankDto } from './dto/add-bank.dto';
 import { VerifyWithdrawalOtpDto } from './dto/verify-withdrawal-otp.dto';
@@ -24,7 +27,8 @@ import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Banks')
 @Controller('banks')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, UserTypesGuard)
+@UserTypes(UserType.CREATOR, UserType.CONTRIBUTOR)
 @ApiBearerAuth('JWT-auth')
 export class BanksController {
   constructor(private readonly banksService: BanksService) {}

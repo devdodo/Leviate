@@ -129,6 +129,16 @@ export class UsersService {
       });
     }
 
+    let socialVerificationQueued: string[] = [];
+    if (socialChanged && updateProfileDto.socialMediaHandles) {
+      socialVerificationQueued =
+        await this.socialVerificationService.queueAdminReviewForChangedSocialHandles(
+          userId,
+          (user.profile?.socialMediaHandles as Record<string, string>) || {},
+          updateProfileDto.socialMediaHandles,
+        );
+    }
+
     // Check if profile is complete
     const updatedProfile = await this.prisma.userProfile.findUnique({
       where: { userId },
@@ -150,6 +160,9 @@ export class UsersService {
       message: 'Profile updated successfully',
       data: {
         profileComplete: isComplete || false,
+        ...(socialVerificationQueued.length > 0 && {
+          socialVerificationQueued,
+        }),
       },
     };
   }

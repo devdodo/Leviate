@@ -7,6 +7,9 @@ import {
 } from '@nestjs/swagger';
 import { ReferralsService } from './referrals.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { UserTypesGuard } from '../common/guards/user-types.guard';
+import { UserTypes } from '../common/decorators/user-types.decorator';
+import { UserType } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApplyReferralDto } from './dto/apply-referral.dto';
 import { WithdrawDto } from '../wallet/dto/withdraw.dto';
@@ -14,7 +17,8 @@ import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Referrals')
 @Controller('referrals')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, UserTypesGuard)
+@UserTypes(UserType.CREATOR, UserType.CONTRIBUTOR)
 @ApiBearerAuth('JWT-auth')
 export class ReferralsController {
   constructor(private readonly referralsService: ReferralsService) {}
