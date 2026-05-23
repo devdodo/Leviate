@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../common/services/prisma.service';
 import { EmailService } from '../common/services/email.service';
 import { SignupDto } from './dto/signup.dto';
+import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
@@ -69,6 +70,8 @@ export class AuthService {
 
     // Generate unique referral code for the new user
     const userReferralCode = this.generateReferralCode();
+    const socialVerificationCode =
+      await allocateUniqueSocialVerificationCode(this.prisma);
 
     // Create user with initial reputation score of 75
     const user = await this.prisma.user.create({
@@ -79,6 +82,7 @@ export class AuthService {
         verificationCode,
         verificationCodeExpiresAt,
         referralCode: userReferralCode,
+        socialVerificationCode,
         referredById,
         reputationScore: 75, // Initial reputation score
       },
@@ -115,6 +119,7 @@ export class AuthService {
         email: user.email,
         verificationCode,
         verificationCodeExpiresAt,
+        socialVerificationCode,
       },
     };
   }

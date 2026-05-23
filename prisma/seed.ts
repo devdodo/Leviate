@@ -74,6 +74,7 @@ async function main() {
 
   const passwordHash = await bcrypt.hash(superAdminPassword, 12);
   const referralCode = generateReferralCode();
+  const socialVerificationCode = generateSocialVerificationCode();
 
   const superAdmin = await prisma.user.create({
     data: {
@@ -84,6 +85,7 @@ async function main() {
       emailVerified: true,
       profileComplete: true,
       referralCode,
+      socialVerificationCode,
       reputationScore: 100,
       status: 'ACTIVE',
     },
@@ -108,6 +110,15 @@ function generateReferralCode(): string {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
+}
+
+function generateSocialVerificationCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let body = '';
+  for (let i = 0; i < 8; i++) {
+    body += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `LV-${body}`;
 }
 
 main()

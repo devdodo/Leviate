@@ -27,13 +27,18 @@ import { VerifyNinDto } from './dto/verify-nin.dto';
 import { LinkSocialDto } from './dto/link-social.dto';
 import { RecentActivityQueryDto } from './dto/recent-activity-query.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
+import { SocialVerificationService } from './social-verification.service';
+import { SubmitSocialVerificationDto } from './dto/submit-social-verification.dto';
 
 @ApiTags('Users')
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly socialVerificationService: SocialVerificationService,
+  ) {}
 
   @Get('me/recent-activity')
   @ApiOperation({
@@ -76,7 +81,11 @@ export class UsersController {
   }
 
   @Put('profile')
-  @ApiOperation({ summary: 'Update user profile' })
+  @ApiOperation({
+    summary: 'Update user profile',
+    description:
+      'Updates employment, location, hobbies (30-day cooldown after first set), and social handles (90-day cooldown). Legal name and age are set via onboarding only.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Profile updated successfully',
@@ -129,6 +138,42 @@ export class UsersController {
     @Body() linkSocialDto: LinkSocialDto,
   ) {
     return this.usersService.linkSocialMedia(user.id, linkSocialDto);
+  }
+
+  @Get('social-verification/instructions')
+  @ApiOperation({
+    summary: 'Get verification code and instructions',
+    description:
+      'Returns the code users must add to their public bio before submitting for manual review.',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  getSocialVerificationInstructions(@CurrentUser() user: { id: string }) {
+    return this.socialVerificationService.getInstructions(user.id);
+  }
+
+  @Get('social-verification/status')
+  @ApiOperation({
+    summary: 'Per-platform social verification status',
+    description:
+      'NOT_LINKED | AWAITING_SUBMISSION | PENDING | VERIFIED | REJECTED for each platform.',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  getSocialVerificationStatus(@CurrentUser() user: { id: string }) {
+    return this.socialVerificationService.getMyPlatformStatuses(user.id);
+  }
+
+  @Post('social-verification/submit')
+  @ApiOperation({
+    summary: 'Submit verification code for manual review',
+    description:
+      'After adding the code from instructions to your public bio, submit it here for admin verification.',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  submitSocialVerification(
+    @CurrentUser() user: { id: string },
+    @Body() dto: SubmitSocialVerificationDto,
+  ) {
+    return this.socialVerificationService.submitVerification(user.id, dto);
   }
 }
 

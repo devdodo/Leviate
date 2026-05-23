@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../common/services/prisma.service';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
 import { UserStatus, AdminActionType, UserRole, UserType } from '@prisma/client';
 
 // Type guard to ensure SUPERADMIN is recognized
@@ -339,6 +340,9 @@ export class AdminService {
       throw new BadRequestException('role must be ADMIN or SUPERADMIN');
     }
 
+    const socialVerificationCode =
+      await allocateUniqueSocialVerificationCode(this.prisma);
+
     // Staff accounts are approvers (submission review), not creators/contributors
     const admin = await this.prisma.user.create({
       data: {
@@ -349,6 +353,7 @@ export class AdminService {
         emailVerified: true,
         profileComplete: true,
         referralCode,
+        socialVerificationCode,
         reputationScore: 100,
       },
       select: {

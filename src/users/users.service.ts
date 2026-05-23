@@ -20,6 +20,12 @@ import {
   assertLegalNameUpdatesAllowed,
   legalNamesLockUpdate,
 } from '../common/utils/profile-legal-name.util';
+import {
+  assertHobbiesInterestsUpdateAllowed,
+  assertSocialMediaHandlesUpdateAllowed,
+  assertSocialMediaPartialUpdateAllowed,
+} from '../common/utils/profile-field-cooldown.util';
+import { SocialVerificationService } from './social-verification.service';
 
 type ActivityRow = {
   id: string;
@@ -35,6 +41,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private encryptionService: EncryptionService,
+    private socialVerificationService: SocialVerificationService,
   ) {}
 
   async getProfile(userId: string) {
@@ -59,6 +66,7 @@ export class UsersService {
         profileComplete: user.profileComplete,
         reputationScore: user.reputationScore,
         ninVerified: user.ninVerified,
+        socialVerificationCode: user.socialVerificationCode,
         profile: user.profile,
       },
     };
@@ -74,28 +82,38 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    assertLegalNameUpdatesAllowed(
+    const hobbiesChanged = assertHobbiesInterestsUpdateAllowed(
       user.profile,
-      updateProfileDto.firstName,
-      updateProfileDto.lastName,
+      updateProfileDto.hobbiesInterests,
+    );
+    const socialChanged = assertSocialMediaHandlesUpdateAllowed(
+      user.profile,
+      updateProfileDto.socialMediaHandles,
     );
 
-    // Update or create profile
-    const profileData: any = {
-      firstName: updateProfileDto.firstName,
-      lastName: updateProfileDto.lastName,
-      age: updateProfileDto.age,
-      hobbiesInterests: updateProfileDto.hobbiesInterests,
+    const profileData: Record<string, unknown> = {
       employmentStatus: updateProfileDto.employmentStatus,
       state: updateProfileDto.state,
       city: updateProfileDto.city,
-      socialMediaHandles: updateProfileDto.socialMediaHandles,
     };
 
-    // Remove undefined values
+    if (hobbiesChanged) {
+      profileData.hobbiesInterests = updateProfileDto.hobbiesInterests;
+      profileData.hobbiesInterestsUpdatedAt = new Date();
+    }
+
+    if (socialChanged) {
+      profileData.socialMediaHandles = updateProfileDto.socialMediaHandles;
+      profileData.socialMediaHandlesUpdatedAt = new Date();
+    }
+
     Object.keys(profileData).forEach(
       (key) => profileData[key] === undefined && delete profileData[key],
     );
+
+    if (Object.keys(profileData).length === 0) {
+      throw new BadRequestException('No profile fields to update');
+    }
 
     if (user.profile) {
       await this.prisma.userProfile.update({
@@ -174,14 +192,27 @@ export class UsersService {
       socialMediaHandles: onboardingDto.socialMediaHandles || {},
     };
 
+    const now = new Date();
+    const cooldownTimestamps: Record<string, Date> = {};
+    if (profileData.hobbiesInterests?.length) {
+      cooldownTimestamps.hobbiesInterestsUpdatedAt = now;
+    }
+    if (
+      profileData.socialMediaHandles &&
+      Object.keys(profileData.socialMediaHandles).length > 0
+    ) {
+      cooldownTimestamps.socialMediaHandlesUpdatedAt = now;
+    }
+
     await this.prisma.userProfile.upsert({
       where: { userId },
       create: {
         userId,
         ...profileData,
         ...nameLockData,
+        ...cooldownTimestamps,
       },
-      update: { ...profileData, ...nameLockData },
+      update: { ...profileData, ...nameLockData, ...cooldownTimestamps },
     });
 
     // Mark profile as complete
@@ -246,17 +277,27 @@ export class UsersService {
       [linkSocialDto.platform]: linkSocialDto.handle,
     };
 
-    // Update profile with new social media handle
+    assertSocialMediaPartialUpdateAllowed(user.profile);
+
     await this.prisma.userProfile.upsert({
       where: { userId },
       create: {
         userId,
         socialMediaHandles: updatedHandles,
+        socialMediaHandlesUpdatedAt: new Date(),
       },
       update: {
         socialMediaHandles: updatedHandles,
+        socialMediaHandlesUpdatedAt: new Date(),
       },
     });
+
+    await this.socialVerificationService.syncAfterLink(
+      userId,
+      linkSocialDto.platform,
+      linkSocialDto.handle,
+      linkSocialDto.profileUrl,
+    );
 
     return {
       message: 'Social media account linked successfully',
@@ -293,6 +334,7 @@ export class UsersService {
         status: user.status,
         firstName: user.profile?.firstName || null,
         lastName: user.profile?.lastName || null,
+        socialVerificationCode: user.socialVerificationCode,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },

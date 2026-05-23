@@ -2,32 +2,18 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   IsOptional,
   IsString,
-  IsInt,
-  Min,
-  Max,
   IsObject,
   IsArray,
 } from 'class-validator';
 
 export class UpdateProfileDto {
-  @ApiProperty({ required: false, example: 'John' })
-  @IsOptional()
-  @IsString()
-  firstName?: string;
-
-  @ApiProperty({ required: false, example: 'Doe' })
-  @IsOptional()
-  @IsString()
-  lastName?: string;
-
-  @ApiProperty({ required: false, example: 25, minimum: 13, maximum: 120 })
-  @IsOptional()
-  @IsInt()
-  @Min(13)
-  @Max(120)
-  age?: number;
-
-  @ApiProperty({ required: false, example: ['Gaming', 'Technology', 'Music'], type: [String] })
+  @ApiProperty({
+    required: false,
+    example: ['Gaming', 'Technology', 'Music'],
+    type: [String],
+    description:
+      'Can be set on first save, then only once every 30 days. Use onboarding for initial profile setup.',
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -58,6 +44,8 @@ export class UpdateProfileDto {
       snapchat: 'johndoe',
       facebook: 'johndoe',
     },
+    description:
+      'Can be set on first save, then only once every 90 days. Use POST /users/link-social for single-platform updates (same cooldown).',
   })
   @IsOptional()
   @IsObject()
@@ -70,4 +58,3 @@ export class UpdateProfileDto {
     facebook?: string;
   };
 }
-
