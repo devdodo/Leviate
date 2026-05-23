@@ -5,6 +5,12 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const HOBBIES_INTERESTS_COOLDOWN_DAYS = 30;
 export const SOCIAL_MEDIA_HANDLES_COOLDOWN_DAYS = 90;
 
+/** When false (default), social handle updates are not cooldown-gated (testing). */
+export function isSocialMediaHandlesCooldownEnabled(): boolean {
+  const raw = process.env.PROFILE_SOCIAL_HANDLES_COOLDOWN_ENABLED?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 type ProfileCooldownFields = {
   hobbiesInterests?: unknown;
   hobbiesInterestsUpdatedAt?: Date | null;
@@ -99,7 +105,7 @@ export function assertSocialMediaHandlesUpdateAllowed(
     return false;
   }
 
-  if (!isEmptyJson(existing)) {
+  if (!isEmptyJson(existing) && isSocialMediaHandlesCooldownEnabled()) {
     assertProfileFieldCooldown(
       profile?.socialMediaHandlesUpdatedAt,
       SOCIAL_MEDIA_HANDLES_COOLDOWN_DAYS,
@@ -113,7 +119,10 @@ export function assertSocialMediaHandlesUpdateAllowed(
 export function assertSocialMediaPartialUpdateAllowed(
   profile: ProfileCooldownFields | null | undefined,
 ): void {
-  if (!isEmptyJson(profile?.socialMediaHandles)) {
+  if (
+    !isEmptyJson(profile?.socialMediaHandles) &&
+    isSocialMediaHandlesCooldownEnabled()
+  ) {
     assertProfileFieldCooldown(
       profile?.socialMediaHandlesUpdatedAt,
       SOCIAL_MEDIA_HANDLES_COOLDOWN_DAYS,
