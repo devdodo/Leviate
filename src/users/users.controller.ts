@@ -59,7 +59,11 @@ export class UsersController {
   }
 
   @Get('me')
-  @ApiOperation({ summary: 'Get current user information' })
+  @ApiOperation({
+    summary: 'Get current user information',
+    description:
+      'Includes connectedSocials: platform, handle, and isApproved per linked account.',
+  })
   @ApiResponse({
     status: 200,
     description: 'User information retrieved successfully',

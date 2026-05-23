@@ -168,22 +168,11 @@ export class SubmissionsService {
         buzzwords: true,
         commentsInstructions: true,
         aiGeneratedBrief: true,
-        llmContextFile: true,
         contributorSummary: true,
         resourceLink: true,
         scheduleStart: true,
         scheduleEnd: true,
         createdAt: true,
-        submissions: {
-          select: {
-            id: true,
-            verificationStatus: true,
-            taskerId: true,
-            createdAt: true,
-            applicationId: true,
-          },
-          orderBy: { createdAt: 'desc' },
-        },
       },
     });
 
@@ -210,9 +199,7 @@ export class SubmissionsService {
         scheduleEnd: task.scheduleEnd,
         createdAt: task.createdAt,
         aiBrief: task.aiGeneratedBrief,
-        llmContextFile: task.llmContextFile,
         contributorSummary: task.contributorSummary,
-        submissions: task.submissions,
       },
     };
   }

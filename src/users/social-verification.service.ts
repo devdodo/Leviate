@@ -65,7 +65,36 @@ export class SocialVerificationService {
     };
   }
 
+  /** Linked social accounts with verification status (for GET /users/me). */
+  async getConnectedSocials(userId: string) {
+    const { platforms, verificationCode } =
+      await this.buildPlatformStatuses(userId);
+
+    const connectedSocials = platforms
+      .filter((p) => p.handle)
+      .map((p) => ({
+        platform: p.platform,
+        handle: p.handle,
+        isApproved: p.status === SocialVerificationStatus.VERIFIED,
+      }));
+
+    return { verificationCode, connectedSocials };
+  }
+
   async getMyPlatformStatuses(userId: string) {
+    const { platforms, verificationCode } =
+      await this.buildPlatformStatuses(userId);
+
+    return {
+      message: 'Social verification status retrieved successfully',
+      data: {
+        verificationCode,
+        platforms,
+      },
+    };
+  }
+
+  private async buildPlatformStatuses(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { profile: true },
@@ -88,6 +117,7 @@ export class SocialVerificationService {
         return {
           platform,
           handle: null,
+          profileUrl: null,
           status: 'NOT_LINKED' as const,
           verificationId: null,
           submittedAt: null,
@@ -96,7 +126,8 @@ export class SocialVerificationService {
         };
       }
 
-      const status = record?.status ?? SocialVerificationStatus.AWAITING_SUBMISSION;
+      const status =
+        record?.status ?? SocialVerificationStatus.AWAITING_SUBMISSION;
       return {
         platform,
         handle,
@@ -115,13 +146,7 @@ export class SocialVerificationService {
 
     const verificationCode = await this.getUserSocialVerificationCode(userId);
 
-    return {
-      message: 'Social verification status retrieved successfully',
-      data: {
-        verificationCode,
-        platforms,
-      },
-    };
+    return { verificationCode, platforms };
   }
 
   async submitVerification(

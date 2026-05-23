@@ -320,6 +320,9 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    const { verificationCode, connectedSocials } =
+      await this.socialVerificationService.getConnectedSocials(userId);
+
     return {
       message: 'User information retrieved successfully',
       data: {
@@ -334,7 +337,8 @@ export class UsersService {
         status: user.status,
         firstName: user.profile?.firstName || null,
         lastName: user.profile?.lastName || null,
-        socialVerificationCode: user.socialVerificationCode,
+        socialVerificationCode: verificationCode,
+        connectedSocials,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },

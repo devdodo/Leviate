@@ -47,7 +47,7 @@ export class AdminSubmissionsController {
   @ApiOperation({
     summary: 'Get AI brief for a task (submission review)',
     description:
-      'Returns the task AI-generated brief, LLM context, contributor summary, and related submissions for admin review.',
+      'Returns the task AI-generated brief, contributor summary, and task context for admin review.',
   })
   @ApiResponse({ status: 200, type: BaseResponseDto })
   @ApiResponse({ status: 404, description: 'Task not found' })
