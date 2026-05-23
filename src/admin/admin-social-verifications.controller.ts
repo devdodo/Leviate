@@ -39,7 +39,8 @@ export class AdminSocialVerificationsController {
   @Get()
   @ApiOperation({
     summary: 'List social profile verification requests',
-    description: 'Default queue: PENDING (user submitted verification code).',
+    description:
+      'Default queue: PENDING and AWAITING_SUBMISSION (new or updated social handles). Use ?status=VERIFIED or REJECTED to filter.',
   })
   @ApiResponse({ status: 200, type: BaseResponseDto })
   async list(@Query() query: ListSocialVerificationsQueryDto) {

@@ -102,8 +102,14 @@ export class UsersService {
       profileData.hobbiesInterestsUpdatedAt = new Date();
     }
 
-    if (socialChanged) {
-      profileData.socialMediaHandles = updateProfileDto.socialMediaHandles;
+    if (socialChanged && updateProfileDto.socialMediaHandles) {
+      const previousHandles =
+        (user.profile?.socialMediaHandles as Record<string, string>) || {};
+      const mergedHandles = {
+        ...previousHandles,
+        ...updateProfileDto.socialMediaHandles,
+      };
+      profileData.socialMediaHandles = mergedHandles;
       profileData.socialMediaHandlesUpdatedAt = new Date();
     }
 
@@ -130,12 +136,14 @@ export class UsersService {
     }
 
     let socialVerificationQueued: string[] = [];
-    if (socialChanged && updateProfileDto.socialMediaHandles) {
+    if (socialChanged && profileData.socialMediaHandles) {
+      const previousHandles =
+        (user.profile?.socialMediaHandles as Record<string, string>) || {};
       socialVerificationQueued =
         await this.socialVerificationService.queueAdminReviewForChangedSocialHandles(
           userId,
-          (user.profile?.socialMediaHandles as Record<string, string>) || {},
-          updateProfileDto.socialMediaHandles,
+          previousHandles,
+          profileData.socialMediaHandles as Record<string, string>,
         );
     }
 
@@ -305,12 +313,17 @@ export class UsersService {
       },
     });
 
-    await this.socialVerificationService.syncAfterLink(
-      userId,
-      linkSocialDto.platform,
-      linkSocialDto.handle,
-      linkSocialDto.profileUrl,
-    );
+    const previousHandle = (currentHandles[linkSocialDto.platform] ?? '')
+      .trim()
+      .toLowerCase();
+    const nextHandle = linkSocialDto.handle.trim().toLowerCase();
+    if (previousHandle !== nextHandle) {
+      await this.socialVerificationService.queueAdminReviewForChangedSocialHandles(
+        userId,
+        currentHandles,
+        updatedHandles,
+      );
+    }
 
     return {
       message: 'Social media account linked successfully',

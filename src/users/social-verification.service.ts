@@ -348,12 +348,20 @@ export class SocialVerificationService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
-    const status = query.status ?? SocialVerificationStatus.PENDING;
 
     const where: {
-      status: SocialVerificationStatus;
+      status?: SocialVerificationStatus | { in: SocialVerificationStatus[] };
       platform?: string;
-    } = { status };
+    } = query.status
+      ? { status: query.status }
+      : {
+          status: {
+            in: [
+              SocialVerificationStatus.PENDING,
+              SocialVerificationStatus.AWAITING_SUBMISSION,
+            ],
+          },
+        };
 
     if (query.platform) {
       try {
@@ -368,7 +376,7 @@ export class SocialVerificationService {
         where,
         skip,
         take: limit,
-        orderBy: { submittedAt: 'desc' },
+        orderBy: [{ submittedAt: 'desc' }, { updatedAt: 'desc' }],
         include: {
           user: {
             select: {
