@@ -21,6 +21,7 @@ import { SuperAdminGuard } from '../common/guards/super-admin.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
+import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { UserRole } from '@prisma/client';
@@ -53,6 +54,24 @@ export class AdminController {
   })
   async getUserDetails(@Param('id') id: string) {
     return this.adminService.getUserDetails(id);
+  }
+
+  @Get('users/:id/transactions')
+  @ApiOperation({
+    summary: 'List wallet transactions for a user (Admin only)',
+    description:
+      'Paginated transaction history with optional filters: type (CREDIT/DEBIT), category, status.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Transactions retrieved successfully',
+    type: BaseResponseDto,
+  })
+  async getUserTransactions(
+    @Param('id') id: string,
+    @Query() query: TransactionQueryDto,
+  ) {
+    return this.adminService.getUserTransactions(id, query);
   }
 
   @Put('users/:id/suspend')
@@ -93,6 +112,18 @@ export class AdminController {
   })
   async getTasks(@Query() query: AdminTaskQueryDto) {
     return this.adminService.getTasks(query);
+  }
+
+  @Get('tasks/:id')
+  @ApiOperation({ summary: 'Get task by ID (Admin only)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Task retrieved successfully',
+    type: BaseResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  async getTaskById(@Param('id') id: string) {
+    return this.adminService.getTaskById(id);
   }
 
   @Get('statistics')

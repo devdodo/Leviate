@@ -6,6 +6,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
+import { WalletService } from '../wallet/wallet.service';
+import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
@@ -17,7 +19,10 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private walletService: WalletService,
+  ) {}
 
   async getUsers(query: AdminUserQueryDto) {
     const {
@@ -109,6 +114,19 @@ export class AdminService {
       message: 'User details retrieved successfully',
       data: user,
     };
+  }
+
+  async getUserTransactions(userId: string, query: TransactionQueryDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return this.walletService.getTransactions(userId, query);
   }
 
   async suspendUser(adminId: string, userId: string, reason?: string, requesterRole?: UserRole) {
@@ -232,6 +250,86 @@ export class AdminService {
           totalPages: Math.ceil(total / limit),
         },
       },
+    };
+  }
+
+  async getTaskById(taskId: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            status: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+        applications: {
+          orderBy: { appliedAt: 'desc' },
+          include: {
+            tasker: {
+              select: {
+                id: true,
+                email: true,
+                reputationScore: true,
+                profile: {
+                  select: {
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+            _count: {
+              select: { submissions: true },
+            },
+          },
+        },
+        submissions: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            tasker: {
+              select: {
+                id: true,
+                email: true,
+                profile: {
+                  select: {
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+            verifiedBy: {
+              select: {
+                id: true,
+                email: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            applications: true,
+            submissions: true,
+          },
+        },
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+
+    return {
+      message: 'Task retrieved successfully',
+      data: task,
     };
   }
 

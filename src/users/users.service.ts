@@ -14,6 +14,7 @@ import { RecentActivityQueryDto } from './dto/recent-activity-query.dto';
 import {
   ApplicationStatus,
   ReferralStatus,
+  UserType,
   VerificationStatus,
 } from '@prisma/client';
 import {
@@ -201,6 +202,11 @@ export class UsersService {
       onboardingDto.lastName,
     );
 
+    const businessFields = this.resolveCreatorBusinessFields(
+      user.userType,
+      onboardingDto,
+    );
+
     // Create or update profile
     const profileData = {
       firstName: onboardingDto.firstName,
@@ -211,6 +217,7 @@ export class UsersService {
       state: onboardingDto.state,
       city: onboardingDto.city,
       socialMediaHandles: onboardingDto.socialMediaHandles || {},
+      ...businessFields,
     };
 
     const now = new Date();
@@ -246,8 +253,48 @@ export class UsersService {
       message: 'Onboarding completed successfully',
       data: {
         profileComplete: true,
+        isBusiness: businessFields.isBusiness,
+        businessName: businessFields.businessName,
       },
     };
+  }
+
+  private resolveCreatorBusinessFields(
+    userType: UserType,
+    onboardingDto: OnboardingDto,
+  ): { isBusiness: boolean; businessName: string | null } {
+    const hasBusinessPayload =
+      onboardingDto.isBusiness !== undefined ||
+      onboardingDto.businessName !== undefined;
+
+    if (userType !== UserType.CREATOR) {
+      if (hasBusinessPayload) {
+        throw new BadRequestException(
+          'businessName and isBusiness are only accepted for creator accounts',
+        );
+      }
+      return { isBusiness: false, businessName: null };
+    }
+
+    const isBusiness = onboardingDto.isBusiness ?? false;
+
+    if (!isBusiness) {
+      if (onboardingDto.businessName?.trim()) {
+        throw new BadRequestException(
+          'businessName must not be provided when isBusiness is false',
+        );
+      }
+      return { isBusiness: false, businessName: null };
+    }
+
+    const businessName = onboardingDto.businessName?.trim();
+    if (!businessName) {
+      throw new BadRequestException(
+        'businessName is required when isBusiness is true',
+      );
+    }
+
+    return { isBusiness: true, businessName };
   }
 
   async verifyNIN(userId: string, verifyNinDto: VerifyNinDto) {
@@ -363,6 +410,8 @@ export class UsersService {
         status: user.status,
         firstName: user.profile?.firstName || null,
         lastName: user.profile?.lastName || null,
+        isBusiness: user.profile?.isBusiness ?? false,
+        businessName: user.profile?.businessName ?? null,
         socialVerificationCode: verificationCode,
         connectedSocials,
         createdAt: user.createdAt,

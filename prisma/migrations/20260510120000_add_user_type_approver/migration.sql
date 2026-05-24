@@ -1,3 +1,6 @@
+-- Enum ADD VALUE must commit before the new value can be used in UPDATE (PostgreSQL 55P04).
+-- prisma-migrate-disable-transaction
+
 -- Ensure UserRole includes SUPERADMIN (may be missing if update_user_roles was never deployed)
 ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'SUPERADMIN';
 

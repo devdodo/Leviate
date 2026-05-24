@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsInt, Min, Max, IsObject, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsInt,
+  Min,
+  Max,
+  IsObject,
+  IsArray,
+  IsBoolean,
+  MaxLength,
+} from 'class-validator';
 
 export class OnboardingDto {
   @ApiProperty({ example: 'John' })
@@ -36,6 +46,25 @@ export class OnboardingDto {
   @IsOptional()
   @IsString()
   city?: string;
+
+  @ApiProperty({
+    required: false,
+    example: false,
+    description: 'Creators only. Set true when onboarding as a business.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isBusiness?: boolean;
+
+  @ApiProperty({
+    required: false,
+    example: 'Acme Brands Ltd',
+    description: 'Creators only. Required when isBusiness is true.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  businessName?: string;
 
   @ApiProperty({
     required: false,

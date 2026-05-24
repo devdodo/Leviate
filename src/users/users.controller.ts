@@ -29,6 +29,8 @@ import { OnboardingDto } from './dto/onboarding.dto';
 import { VerifyNinDto } from './dto/verify-nin.dto';
 import { LinkSocialDto } from './dto/link-social.dto';
 import { RecentActivityQueryDto } from './dto/recent-activity-query.dto';
+import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
+import { WalletService } from '../wallet/wallet.service';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 import { SocialVerificationService } from './social-verification.service';
 import { SubmitSocialVerificationDto } from './dto/submit-social-verification.dto';
@@ -42,7 +44,26 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly socialVerificationService: SocialVerificationService,
+    private readonly walletService: WalletService,
   ) {}
+
+  @Get('me/transactions')
+  @ApiOperation({
+    summary: 'Get wallet transaction history',
+    description:
+      'Paginated wallet transactions for the current user. Optional filters: type, category, status.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Transactions retrieved successfully',
+    type: BaseResponseDto,
+  })
+  async getMyTransactions(
+    @CurrentUser() user: { id: string },
+    @Query() query: TransactionQueryDto,
+  ) {
+    return this.walletService.getTransactions(user.id, query);
+  }
 
   @Get('me/recent-activity')
   @ApiOperation({
@@ -107,7 +128,11 @@ export class UsersController {
   }
 
   @Post('onboarding')
-  @ApiOperation({ summary: 'Complete onboarding process' })
+  @ApiOperation({
+    summary: 'Complete onboarding process',
+    description:
+      'Creators may pass isBusiness (boolean) and businessName (required when isBusiness is true) to distinguish businesses from individuals.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Onboarding completed successfully',

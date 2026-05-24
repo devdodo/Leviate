@@ -208,6 +208,8 @@ model UserProfile {
   employmentStatus            String?   @map("employment_status") @db.VarChar(50)
   state                       String?   @db.VarChar(100)
   city                        String?   @db.VarChar(100)
+  isBusiness                  Boolean   @default(false) @map("is_business")
+  businessName                String?   @map("business_name") @db.VarChar(255)
   socialMediaHandles          Json?     @map("social_media_handles") // {twitter, linkedin, instagram, tiktok, snapchat, facebook}
   socialMediaHandlesUpdatedAt DateTime? @map("social_media_handles_updated_at") @db.Timestamptz(6)
 
