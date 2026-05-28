@@ -28,6 +28,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
 import { CreateCampaignDisputeDto } from './dto/create-campaign-dispute.dto';
+import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Tasks')
@@ -210,15 +211,14 @@ export class TasksController {
     description:
       'Frontend calls this with the reference from Paystack callback. Backend verifies with Paystack and marks task as PAID, allowing publish.',
   })
-  @ApiBody({ schema: { type: 'object', properties: { reference: { type: 'string' } }, required: ['reference'] } })
   @ApiResponse({
     status: 200,
     description: 'Payment verified successfully. Task can now be published.',
     type: BaseResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Payment verification failed' })
-  async verifyPayment(@Body() body: { reference: string }) {
-    return this.tasksService.verifyPayment(body.reference);
+  async verifyPayment(@CurrentUser() user: any, @Body() body: VerifyPaymentDto) {
+    return this.tasksService.verifyPayment(user.id, body);
   }
 
   @Post('payment/webhook')
@@ -279,6 +279,28 @@ export class TasksController {
   @ApiResponse({ status: 400, description: 'Task already paid or not a draft' })
   async initiatePayment(@CurrentUser() user: any, @Param('id') id: string) {
     return this.tasksService.initiatePayment(user.id, id);
+  }
+
+  @Post(':id/payment/verify')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify payment for a specific task',
+    description:
+      'Preferred after Paystack redirect. Pass reference/trxref from the callback when available; otherwise the stored paymentReference is used.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment verified successfully',
+    type: BaseResponseDto,
+  })
+  async verifyTaskPayment(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: VerifyPaymentDto,
+  ) {
+    return this.tasksService.verifyPayment(user.id, { ...body, taskId: id });
   }
 
   @Post(':id/save-draft')

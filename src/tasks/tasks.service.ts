@@ -1807,8 +1807,12 @@ export class TasksService {
     const platformFee = (budgetAmount * platformFeePercentage) / 100;
     const totalAmount = budgetAmount + platformFee;
 
-    // Always use a fresh reference for Paystack (must be unique per transaction)
-    const paymentReference = `TASK_${Date.now()}_${taskId.substring(0, 8)}`;
+    const existingReference = taskData.paymentReference as string | null | undefined;
+    const existingStatus = taskData.paymentStatus as string | null | undefined;
+    const paymentReference =
+      existingReference && existingStatus === 'PENDING'
+        ? existingReference
+        : `TASK_${Date.now()}_${taskId.substring(0, 8)}`;
     const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3001';
     const callbackUrl = `${frontendUrl}/tasks/payment/callback`;
 
@@ -1855,63 +1859,149 @@ export class TasksService {
     };
   }
 
-  async verifyPayment(reference: string) {
-    try {
-      const verification = await this.paystackService.verifyPayment(reference);
+  async verifyPayment(
+    userId: string,
+    options: { reference?: string; trxref?: string; taskId?: string },
+  ) {
+    const clientReference = (options.reference ?? options.trxref)?.trim();
+    const taskId = options.taskId?.trim();
 
-      if (verification.data.status === 'success') {
-        // Find task by payment reference
-        const task = await this.prisma.task.findUnique({
-          where: { paymentReference: reference } as any,
-        });
+    if (!clientReference && !taskId) {
+      throw new BadRequestException(
+        'Provide a Paystack reference (reference or trxref) or taskId',
+      );
+    }
 
-        if (!task) {
-          throw new NotFoundException('Task not found for this payment reference');
+    let task = taskId
+      ? await this.prisma.task.findUnique({ where: { id: taskId } })
+      : clientReference
+        ? await this.prisma.task.findUnique({
+            where: { paymentReference: clientReference } as any,
+          })
+        : null;
+
+    if (!task) {
+      throw new NotFoundException(
+        taskId ? 'Task not found' : 'Task not found for this payment reference',
+      );
+    }
+
+    if (task.creatorId !== userId) {
+      throw new ForbiddenException('You can only verify payment for your own tasks');
+    }
+
+    const taskData = task as any;
+    if (taskData.paymentStatus === 'PAID') {
+      return {
+        message: 'Payment already verified',
+        data: { task, payment: null },
+      };
+    }
+
+    const referencesToTry = [
+      ...new Set(
+        [clientReference, taskData.paymentReference as string | undefined].filter(
+          (ref): ref is string => Boolean(ref),
+        ),
+      ),
+    ];
+
+    let verification: Awaited<ReturnType<PaystackService['verifyPayment']>> | null = null;
+    let lastError: BadRequestException | null = null;
+
+    for (const ref of referencesToTry) {
+      try {
+        verification = await this.paystackService.verifyPayment(ref);
+        break;
+      } catch (error) {
+        if (
+          error instanceof BadRequestException &&
+          this.isPaystackReferenceNotFound(error)
+        ) {
+          lastError = error;
+          continue;
         }
-
-        // Update task payment status
-        const updatedTask = await this.prisma.task.update({
-          where: { id: task.id },
-          data: {
-            paymentStatus: 'PAID' as any,
-            paymentVerifiedAt: new Date(),
-          } as any,
-        });
-
-        return {
-          message: 'Payment verified successfully',
-          data: {
-            task: updatedTask,
-            payment: {
-              reference: verification.data.reference,
-              amount: verification.data.amount / 100, // Convert from kobo
-              status: verification.data.status,
-              paidAt: verification.data.paid_at,
-            },
-          },
-        };
-      } else {
-        // Update task payment status to failed
-        const task = await this.prisma.task.findUnique({
-          where: { paymentReference: reference } as any,
-        });
-
-        if (task) {
-          await this.prisma.task.update({
-            where: { id: task.id },
-            data: {
-              paymentStatus: 'FAILED' as any,
-            } as any,
-          });
-        }
-
-        throw new BadRequestException('Payment verification failed');
-      }
-    } catch (error) {
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException(`Payment verification error: ${error.message}`);
+    }
+
+    if (!verification) {
+      throw (
+        lastError ??
+        new BadRequestException(
+          'Payment reference not found on Paystack. Complete checkout with the reference from initiate-payment, or call initiate-payment again if you started a new session.',
+        )
+      );
+    }
+
+    const paystackData = verification.data as any;
+    const paystackReference = paystackData.reference as string;
+
+    if (paystackData.status !== 'success') {
+      await this.prisma.task.update({
+        where: { id: task.id },
+        data: { paymentStatus: 'FAILED' as any } as any,
+      });
+      throw new BadRequestException('Payment verification failed');
+    }
+
+    this.assertPaystackVerificationMatchesTask(task, paystackData);
+
+    const updatedTask = await this.prisma.task.update({
+      where: { id: task.id },
+      data: {
+        paymentStatus: 'PAID' as any,
+        paymentVerifiedAt: new Date(),
+        ...(paystackReference !== taskData.paymentReference
+          ? { paymentReference: paystackReference }
+          : {}),
+      } as any,
+    });
+
+    const paidAt = paystackData.paid_at ?? paystackData.paidAt ?? null;
+
+    return {
+      message: 'Payment verified successfully',
+      data: {
+        task: updatedTask,
+        payment: {
+          reference: paystackReference,
+          amount: Number(paystackData.amount) / 100,
+          status: paystackData.status,
+          paidAt,
+        },
+      },
+    };
+  }
+
+  private isPaystackReferenceNotFound(error: BadRequestException): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return message.includes('reference not found') || message.includes('not found');
+  }
+
+  private assertPaystackVerificationMatchesTask(task: any, paystackData: any): void {
+    const budgetAmount = Number(task.budget) || 0;
+    const platformFeePercentage = Number(task.platformFeePercentage) || 5;
+    const platformFee = (budgetAmount * platformFeePercentage) / 100;
+    const expectedAmountKobo = Math.round((budgetAmount + platformFee) * 100);
+
+    if (Number(paystackData.amount) !== expectedAmountKobo) {
+      throw new BadRequestException('Payment amount does not match task total');
+    }
+
+    if (paystackData.currency && paystackData.currency !== 'NGN') {
+      throw new BadRequestException('Payment currency must be NGN');
+    }
+
+    const metadata = paystackData.metadata ?? {};
+    if (metadata.taskId && metadata.taskId !== task.id) {
+      throw new BadRequestException('Payment metadata does not match this task');
+    }
+    if (metadata.userId && metadata.userId !== task.creatorId) {
+      throw new BadRequestException('Payment metadata does not match task owner');
+    }
+    if (metadata.type && metadata.type !== 'TASK_PAYMENT') {
+      throw new BadRequestException('Payment metadata type is invalid');
     }
   }
 
