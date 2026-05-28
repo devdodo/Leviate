@@ -218,7 +218,7 @@ export class TasksController {
   })
   @ApiResponse({ status: 400, description: 'Payment verification failed' })
   async verifyPayment(@CurrentUser() user: any, @Body() body: VerifyPaymentDto) {
-    return this.tasksService.verifyPayment(user.id, body);
+    return this.tasksService.verifyPayment(user.id, body.reference);
   }
 
   @Post('payment/webhook')
@@ -279,28 +279,6 @@ export class TasksController {
   @ApiResponse({ status: 400, description: 'Task already paid or not a draft' })
   async initiatePayment(@CurrentUser() user: any, @Param('id') id: string) {
     return this.tasksService.initiatePayment(user.id, id);
-  }
-
-  @Post(':id/payment/verify')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('JWT-auth')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Verify payment for a specific task',
-    description:
-      'Preferred after Paystack redirect. Pass reference/trxref from the callback when available; otherwise the stored paymentReference is used.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Payment verified successfully',
-    type: BaseResponseDto,
-  })
-  async verifyTaskPayment(
-    @CurrentUser() user: any,
-    @Param('id') id: string,
-    @Body() body: VerifyPaymentDto,
-  ) {
-    return this.tasksService.verifyPayment(user.id, { ...body, taskId: id });
   }
 
   @Post(':id/save-draft')

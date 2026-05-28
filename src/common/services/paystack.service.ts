@@ -97,6 +97,11 @@ export class PaystackService {
     return this.mockTransfers;
   }
 
+  /** `test` or `live` — used in error messages when verify fails. */
+  getKeyMode(): 'test' | 'live' {
+    return this.secretKey.includes('_test_') ? 'test' : 'live';
+  }
+
   private static isTruthy(value: string | undefined): boolean {
     if (!value) return false;
     const v = value.trim().toLowerCase();
@@ -395,12 +400,34 @@ export class PaystackService {
       fees_breakdown: any;
     };
   }> {
-    const response = await this.makeRequest<{
-      status: boolean;
-      message: string;
-      data: any;
-    }>(`/transaction/verify/${reference}`);
-    return response;
+    const trimmed = reference.trim();
+    const encoded = encodeURIComponent(trimmed);
+    try {
+      const response = await this.makeRequest<{
+        status: boolean;
+        message: string;
+        data: any;
+      }>(`/transaction/verify/${encoded}`);
+      return response;
+    } catch (error) {
+      if (
+        error instanceof BadRequestException &&
+        PaystackService.isReferenceNotFoundMessage(error.message)
+      ) {
+        const mode = this.getKeyMode();
+        throw new BadRequestException(
+          `Transaction reference not found in Paystack ${mode} mode. ` +
+            `Your server uses PAYSTACK_SECRET_KEY for ${mode} transactions — open the same mode (Test/Live) in the Paystack dashboard where you see this charge. ` +
+            `Reference: ${trimmed}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private static isReferenceNotFoundMessage(message: string): boolean {
+    const lower = message.toLowerCase();
+    return lower.includes('reference not found') || lower.includes('transaction reference not found');
   }
 }
 

@@ -57,52 +57,33 @@ describe('TasksService Paystack payments', () => {
     );
   });
 
-  it('verifies payment when Paystack amount, currency, metadata, and owner match', async () => {
-    prisma.task.findUnique.mockResolvedValue(
-      buildTask({ paymentReference: 'TASK_REF_1' }),
-    );
+  it('verifies payment with Paystack reference only', async () => {
+    prisma.task.findUnique
+      .mockResolvedValueOnce(buildTask({ paymentReference: 'TASK_REF_1' }))
+      .mockResolvedValueOnce(null);
     paystackService.verifyPayment.mockResolvedValue({
       data: buildPaystackVerification(),
     });
     prisma.task.update.mockResolvedValue(buildTask({ paymentStatus: 'PAID' }));
 
-    const result = await service.verifyPayment('creator-1', {
-      reference: 'TASK_REF_1',
-    });
+    const result = await service.verifyPayment('creator-1', 'TASK_REF_1');
 
-    expect(prisma.task.update).toHaveBeenCalledWith({
-      where: { id: 'task-1' },
-      data: expect.objectContaining({
-        paymentStatus: 'PAID',
-        paymentVerifiedAt: expect.any(Date),
-      }),
-    });
+    expect(paystackService.verifyPayment).toHaveBeenCalledWith('TASK_REF_1');
     expect(result.message).toBe('Payment verified successfully');
   });
 
-  it('tries stored reference when callback reference is not found on Paystack', async () => {
-    prisma.task.findUnique.mockResolvedValue(
-      buildTask({ paymentReference: 'TASK_STORED' }),
-    );
-    paystackService.verifyPayment
-      .mockRejectedValueOnce(
-        new BadRequestException('Transaction reference not found.'),
-      )
-      .mockResolvedValueOnce({
-        data: buildPaystackVerification({
-          reference: 'TASK_STORED',
-        }),
-      });
+  it('resolves task from Paystack metadata when DB reference was overwritten', async () => {
+    prisma.task.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(buildTask({ paymentReference: 'TASK_NEW' }));
+    paystackService.verifyPayment.mockResolvedValue({
+      data: buildPaystackVerification({ reference: 'TASK_PAID_REF' }),
+    });
     prisma.task.update.mockResolvedValue(buildTask({ paymentStatus: 'PAID' }));
 
-    await service.verifyPayment('creator-1', {
-      reference: 'TASK_CALLBACK_STALE',
-      taskId: 'task-1',
-    });
+    await service.verifyPayment('creator-1', 'TASK_PAID_REF');
 
-    expect(paystackService.verifyPayment).toHaveBeenCalledTimes(2);
-    expect(paystackService.verifyPayment).toHaveBeenNthCalledWith(1, 'TASK_CALLBACK_STALE');
-    expect(paystackService.verifyPayment).toHaveBeenNthCalledWith(2, 'TASK_STORED');
+    expect(prisma.task.findUnique).toHaveBeenLastCalledWith({ where: { id: 'task-1' } });
   });
 
   it('is idempotent for an already paid task', async () => {
@@ -110,29 +91,23 @@ describe('TasksService Paystack payments', () => {
       buildTask({ paymentReference: 'TASK_REF_1', paymentStatus: 'PAID' }),
     );
 
-    const result = await service.verifyPayment('creator-1', {
-      reference: 'TASK_REF_1',
-    });
+    const result = await service.verifyPayment('creator-1', 'TASK_REF_1');
 
     expect(paystackService.verifyPayment).not.toHaveBeenCalled();
-    expect(prisma.task.update).not.toHaveBeenCalled();
     expect(result.message).toBe('Payment already verified');
   });
 
-  it('rejects verification for unknown references and wrong owners', async () => {
-    prisma.task.findUnique.mockResolvedValueOnce(null);
-
-    await expect(
-      service.verifyPayment('creator-1', { reference: 'missing' }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-
-    prisma.task.findUnique.mockResolvedValueOnce(
-      buildTask({ creatorId: 'creator-2' }),
+  it('rejects verification for wrong owners', async () => {
+    prisma.task.findUnique.mockResolvedValue(
+      buildTask({ creatorId: 'creator-2', paymentReference: 'TASK_REF_1' }),
     );
+    paystackService.verifyPayment.mockResolvedValue({
+      data: buildPaystackVerification(),
+    });
 
-    await expect(
-      service.verifyPayment('creator-1', { reference: 'TASK_REF_1' }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.verifyPayment('creator-1', 'TASK_REF_1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
   function buildCreator(overrides: Record<string, unknown> = {}) {

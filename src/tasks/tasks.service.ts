@@ -1859,30 +1859,40 @@ export class TasksService {
     };
   }
 
-  async verifyPayment(
-    userId: string,
-    options: { reference?: string; trxref?: string; taskId?: string },
-  ) {
-    const clientReference = (options.reference ?? options.trxref)?.trim();
-    const taskId = options.taskId?.trim();
-
-    if (!clientReference && !taskId) {
-      throw new BadRequestException(
-        'Provide a Paystack reference (reference or trxref) or taskId',
-      );
+  async verifyPayment(userId: string, reference: string) {
+    const paymentReference = reference.trim();
+    if (!paymentReference) {
+      throw new BadRequestException('Payment reference is required');
     }
 
-    let task = taskId
-      ? await this.prisma.task.findUnique({ where: { id: taskId } })
-      : clientReference
-        ? await this.prisma.task.findUnique({
-            where: { paymentReference: clientReference } as any,
-          })
-        : null;
+    let task = await this.prisma.task.findUnique({
+      where: { paymentReference } as any,
+    });
+
+    if (task && (task as any).paymentStatus === 'PAID') {
+      if (task.creatorId !== userId) {
+        throw new ForbiddenException('You can only verify payment for your own tasks');
+      }
+      return {
+        message: 'Payment already verified',
+        data: { task, payment: null },
+      };
+    }
+
+    const verification = await this.paystackService.verifyPayment(paymentReference);
+    const paystackData = verification.data as any;
+    const paystackReference = (paystackData.reference as string) || paymentReference;
+
+    if (!task) {
+      const metadataTaskId = paystackData.metadata?.taskId as string | undefined;
+      if (metadataTaskId) {
+        task = await this.prisma.task.findUnique({ where: { id: metadataTaskId } });
+      }
+    }
 
     if (!task) {
       throw new NotFoundException(
-        taskId ? 'Task not found' : 'Task not found for this payment reference',
+        'Payment succeeded on Paystack but no task is linked to this reference. Contact support with the reference.',
       );
     }
 
@@ -1890,52 +1900,12 @@ export class TasksService {
       throw new ForbiddenException('You can only verify payment for your own tasks');
     }
 
-    const taskData = task as any;
-    if (taskData.paymentStatus === 'PAID') {
+    if ((task as any).paymentStatus === 'PAID') {
       return {
         message: 'Payment already verified',
         data: { task, payment: null },
       };
     }
-
-    const referencesToTry = [
-      ...new Set(
-        [clientReference, taskData.paymentReference as string | undefined].filter(
-          (ref): ref is string => Boolean(ref),
-        ),
-      ),
-    ];
-
-    let verification: Awaited<ReturnType<PaystackService['verifyPayment']>> | null = null;
-    let lastError: BadRequestException | null = null;
-
-    for (const ref of referencesToTry) {
-      try {
-        verification = await this.paystackService.verifyPayment(ref);
-        break;
-      } catch (error) {
-        if (
-          error instanceof BadRequestException &&
-          this.isPaystackReferenceNotFound(error)
-        ) {
-          lastError = error;
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    if (!verification) {
-      throw (
-        lastError ??
-        new BadRequestException(
-          'Payment reference not found on Paystack. Complete checkout with the reference from initiate-payment, or call initiate-payment again if you started a new session.',
-        )
-      );
-    }
-
-    const paystackData = verification.data as any;
-    const paystackReference = paystackData.reference as string;
 
     if (paystackData.status !== 'success') {
       await this.prisma.task.update({
@@ -1952,9 +1922,7 @@ export class TasksService {
       data: {
         paymentStatus: 'PAID' as any,
         paymentVerifiedAt: new Date(),
-        ...(paystackReference !== taskData.paymentReference
-          ? { paymentReference: paystackReference }
-          : {}),
+        paymentReference: paystackReference,
       } as any,
     });
 
@@ -1972,11 +1940,6 @@ export class TasksService {
         },
       },
     };
-  }
-
-  private isPaystackReferenceNotFound(error: BadRequestException): boolean {
-    const message = error.message?.toLowerCase() ?? '';
-    return message.includes('reference not found') || message.includes('not found');
   }
 
   private assertPaystackVerificationMatchesTask(task: any, paystackData: any): void {
