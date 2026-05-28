@@ -39,16 +39,8 @@ backend.leviateapp.com {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
     }
     
-    # CORS headers (if needed for your frontend)
-    @cors_preflight method OPTIONS
-    handle @cors_preflight {
-        header Access-Control-Allow-Origin "*"
-        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-        header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
-        header Access-Control-Max-Age "3600"
-        respond 204
-    }
-    
+    # CORS is handled by NestJS (see CORS_ORIGINS, FRONTEND_URL, APP_URL in .env)
+
     # Logging (commented out to avoid permission issues - use systemd journal instead)
     # log {
     #     output file /var/log/caddy/api.log

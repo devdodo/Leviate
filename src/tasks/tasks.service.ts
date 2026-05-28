@@ -10,11 +10,19 @@ import { PrismaService } from '../common/services/prisma.service';
 import { AIService } from '../common/services/ai.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { PaystackService } from '../common/services/paystack.service';
+import { WalletService } from '../wallet/wallet.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
-import { TaskStatus, ApplicationStatus, UserType } from '@prisma/client';
+import {
+  TaskStatus,
+  ApplicationStatus,
+  UserType,
+  TransactionCategory,
+  TransactionStatus,
+  DisputeStatus,
+} from '@prisma/client';
 import {
   contributorNetPayoutAmount,
   resolveContributorSlotsForPersistence,
@@ -52,6 +60,7 @@ export class TasksService {
     private reputationService: ReputationService,
     private paystackService: PaystackService,
     private configService: ConfigService,
+    private walletService: WalletService,
   ) {}
 
   /**
@@ -1383,6 +1392,174 @@ export class TasksService {
     return {
       message: 'My created tasks retrieved successfully',
       data: tasks,
+    };
+  }
+
+  private async settleCampaignRefund(task: {
+    id: string;
+    title: string;
+    creatorId: string;
+    budget: any;
+  }): Promise<{ refundedAmount: number; paidOutAmount: number }> {
+    const submissions = await this.prisma.taskSubmission.findMany({
+      where: { taskId: task.id },
+      select: { id: true },
+    });
+    const submissionIds = submissions.map((s) => s.id);
+
+    const paidOutAggregate = submissionIds.length
+      ? await this.prisma.walletTransaction.aggregate({
+          where: {
+            referenceId: { in: submissionIds },
+            transactionCategory: TransactionCategory.TASK_PAYOUT,
+            status: TransactionStatus.COMPLETED,
+          },
+          _sum: { amount: true },
+        })
+      : { _sum: { amount: null } };
+
+    const paidOutAmount = Number(paidOutAggregate._sum.amount ?? 0);
+    const grossBudget = Number(task.budget ?? 0);
+    const refundedAmount = Math.max(0, grossBudget - paidOutAmount);
+
+    if (refundedAmount > 0) {
+      await this.walletService.credit(
+        task.creatorId,
+        refundedAmount,
+        TransactionCategory.REFUND,
+        `Refund for campaign settlement: ${task.title}`,
+        { referenceId: task.id, taskId: task.id },
+      );
+    }
+
+    return { refundedAmount, paidOutAmount };
+  }
+
+  async pauseTask(userId: string, taskId: string) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+    if (task.creatorId !== userId) {
+      throw new ForbiddenException('You can only pause your own campaigns');
+    }
+    if (task.status !== TaskStatus.ACTIVE) {
+      throw new BadRequestException('Only active campaigns can be paused');
+    }
+
+    const settlement = await this.settleCampaignRefund(task);
+
+    const pausedTask = await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        status: TaskStatus.PAUSED,
+        paymentStatus:
+          settlement.refundedAmount > 0 ? ('REFUNDED' as any) : undefined,
+      },
+    });
+
+    await this.prisma.notification.create({
+      data: {
+        receiverId: userId,
+        type: 'SYSTEM_ALERT',
+        title: 'Campaign paused and settled',
+        message: `Campaign paused. Refunded ₦${settlement.refundedAmount.toFixed(2)} (paid out: ₦${settlement.paidOutAmount.toFixed(2)}).`,
+        data: {
+          taskId: task.id,
+          refundedAmount: settlement.refundedAmount,
+          paidOutAmount: settlement.paidOutAmount,
+        },
+      },
+    });
+
+    return {
+      message: 'Campaign paused successfully and funds settled',
+      data: {
+        task: pausedTask,
+        settlement,
+      },
+    };
+  }
+
+  async endTask(userId: string, taskId: string) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+    if (task.creatorId !== userId) {
+      throw new ForbiddenException('You can only end your own campaigns');
+    }
+    if (
+      task.status !== TaskStatus.ACTIVE &&
+      task.status !== TaskStatus.PAUSED
+    ) {
+      throw new BadRequestException(
+        'Only active or paused campaigns can be ended',
+      );
+    }
+
+    const settlement = await this.settleCampaignRefund(task);
+    const endedTask = await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        status: TaskStatus.COMPLETED,
+        paymentStatus:
+          settlement.refundedAmount > 0 ? ('REFUNDED' as any) : undefined,
+      },
+    });
+
+    return {
+      message: 'Campaign ended successfully and funds settled',
+      data: {
+        task: endedTask,
+        settlement,
+      },
+    };
+  }
+
+  async createCampaignDispute(
+    userId: string,
+    taskId: string,
+    reason: string,
+    evidence: string[] = [],
+  ) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+    if (task.creatorId !== userId) {
+      throw new ForbiddenException(
+        'You can only open disputes for your own campaigns',
+      );
+    }
+
+    const existingOpen = await this.prisma.campaignDispute.findFirst({
+      where: {
+        taskId,
+        creatorId: userId,
+        status: {
+          in: [DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW],
+        },
+      },
+    });
+    if (existingOpen) {
+      throw new BadRequestException(
+        'An open dispute already exists for this campaign',
+      );
+    }
+
+    const dispute = await this.prisma.campaignDispute.create({
+      data: {
+        taskId,
+        creatorId: userId,
+        reason,
+        evidence: evidence as any,
+      },
+    });
+
+    return {
+      message: 'Dispute submitted successfully for admin review',
+      data: dispute,
     };
   }
 

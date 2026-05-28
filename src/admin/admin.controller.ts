@@ -22,8 +22,10 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
+import { CampaignDisputeQueryDto } from './dto/campaign-dispute-query.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { ResolveCampaignDisputeDto } from './dto/resolve-campaign-dispute.dto';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('Admin')
@@ -124,6 +126,29 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Task not found' })
   async getTaskById(@Param('id') id: string) {
     return this.adminService.getTaskById(id);
+  }
+
+  @Get('campaign-disputes')
+  @ApiOperation({ summary: 'List creator campaign disputes (Admin only)' })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async listCampaignDisputes(@Query() query: CampaignDisputeQueryDto) {
+    return this.adminService.listCampaignDisputes(query);
+  }
+
+  @Put('campaign-disputes/:id/resolve')
+  @ApiOperation({ summary: 'Resolve or reject campaign dispute (Admin only)' })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async resolveCampaignDispute(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: ResolveCampaignDisputeDto,
+  ) {
+    return this.adminService.resolveCampaignDispute(
+      user.id,
+      id,
+      dto.status,
+      dto.adminComment,
+    );
   }
 
   @Get('statistics')

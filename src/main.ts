@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { resolveCorsOrigins } from './common/utils/cors-origins.util';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -15,8 +16,18 @@ async function bootstrap() {
       contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
     }),
   );
+  const corsOrigins = resolveCorsOrigins();
   app.enableCors({
-    origin: process.env.FRONTEND_URL || true, // Allow all origins in production if not set
+    origin:
+      corsOrigins === true
+        ? true
+        : (origin, callback) => {
+            if (!origin || corsOrigins.includes(origin)) {
+              callback(null, true);
+            } else {
+              callback(null, false);
+            }
+          },
     credentials: true,
   });
 
@@ -68,6 +79,7 @@ async function bootstrap() {
       .addTag('Authentication', 'User authentication endpoints')
       .addTag('Users', 'User management endpoints')
       .addTag('Tasks', 'Task/Job management endpoints')
+      .addTag('Analytics', 'Creator dashboard analytics endpoints')
       .addTag('Wallet', 'Wallet and ledger endpoints')
       .addTag('Admin', 'Admin control endpoints')
       .addTag('Notifications', 'Notification endpoints')

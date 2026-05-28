@@ -27,6 +27,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
+import { CreateCampaignDisputeDto } from './dto/create-campaign-dispute.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Tasks')
@@ -314,5 +315,49 @@ export class TasksController {
     @Param('id') id: string,
   ) {
     return this.tasksService.publishTask(user.id, id);
+  }
+
+  @Post(':id/pause')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Pause an active campaign (creator only), hide from contributors, and settle refunds',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async pauseTask(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.tasksService.pauseTask(user.id, id);
+  }
+
+  @Post(':id/end')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'End a campaign (creator only), hide from contributors, and settle refunds',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async endTask(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.tasksService.endTask(user.id, id);
+  }
+
+  @Post(':id/dispute')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Open a creator-to-admin dispute for a campaign',
+  })
+  @ApiResponse({ status: 201, type: BaseResponseDto })
+  async createDispute(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: CreateCampaignDisputeDto,
+  ) {
+    return this.tasksService.createCampaignDispute(
+      user.id,
+      id,
+      dto.reason,
+      dto.evidence ?? [],
+    );
   }
 }

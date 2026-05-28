@@ -9,9 +9,16 @@ import { PrismaService } from '../common/services/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
+import { CampaignDisputeQueryDto } from './dto/campaign-dispute-query.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
-import { UserStatus, AdminActionType, UserRole, UserType } from '@prisma/client';
+import {
+  UserStatus,
+  AdminActionType,
+  UserRole,
+  UserType,
+  DisputeStatus,
+} from '@prisma/client';
 
 // Type guard to ensure SUPERADMIN is recognized
 const SUPERADMIN_ROLE = 'SUPERADMIN' as UserRole;
@@ -412,6 +419,95 @@ export class AdminService {
           totalPages: Math.ceil(total / limit),
         },
       },
+    };
+  }
+
+  async listCampaignDisputes(query: CampaignDisputeQueryDto) {
+    const { page = 1, limit = 20, status } = query;
+    const skip = (page - 1) * limit;
+    const where: any = {};
+    if (status) where.status = status;
+
+    const [disputes, total] = await Promise.all([
+      this.prisma.campaignDispute.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          creator: {
+            select: {
+              id: true,
+              email: true,
+              profile: { select: { firstName: true, lastName: true } },
+            },
+          },
+          task: {
+            select: { id: true, title: true, status: true, budget: true },
+          },
+          resolvedBy: {
+            select: { id: true, email: true },
+          },
+        },
+      }),
+      this.prisma.campaignDispute.count({ where }),
+    ]);
+
+    return {
+      message: 'Campaign disputes retrieved successfully',
+      data: {
+        disputes,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+    };
+  }
+
+  async resolveCampaignDispute(
+    adminId: string,
+    disputeId: string,
+    status: 'RESOLVED' | 'REJECTED',
+    adminComment?: string,
+  ) {
+    const dispute = await this.prisma.campaignDispute.findUnique({
+      where: { id: disputeId },
+    });
+    if (!dispute) {
+      throw new NotFoundException('Dispute not found');
+    }
+    if (
+      dispute.status !== DisputeStatus.OPEN &&
+      dispute.status !== DisputeStatus.UNDER_REVIEW
+    ) {
+      throw new BadRequestException('Dispute is already closed');
+    }
+
+    const updated = await this.prisma.campaignDispute.update({
+      where: { id: disputeId },
+      data: {
+        status,
+        adminComment: adminComment || null,
+        resolvedById: adminId,
+        resolvedAt: new Date(),
+      },
+    });
+
+    await this.prisma.adminAction.create({
+      data: {
+        adminId,
+        actionType: AdminActionType.RESOLVE_DISPUTE,
+        targetTaskId: dispute.taskId,
+        reason: `Resolved campaign dispute ${disputeId} as ${status}`,
+      },
+    });
+
+    return {
+      message: 'Campaign dispute resolved successfully',
+      data: updated,
     };
   }
 

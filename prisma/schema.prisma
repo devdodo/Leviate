@@ -144,6 +144,13 @@ enum SocialVerificationStatus {
   REJECTED
 }
 
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
+}
+
 // ============================================
 // MODELS
 // ============================================
@@ -184,6 +191,8 @@ model User {
   verifiedSubmissions   TaskSubmission[] @relation("SubmissionVerifier")
   socialVerifications   UserSocialVerification[]
   reviewedSocialVerifications UserSocialVerification[] @relation("SocialVerificationReviewer")
+  creatorDisputes       CampaignDispute[] @relation("CampaignDisputeCreator")
+  resolvedDisputes      CampaignDispute[] @relation("CampaignDisputeResolver")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -285,6 +294,7 @@ model Task {
   // Relations
   applications TaskApplication[]
   submissions  TaskSubmission[]
+  disputes     CampaignDispute[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -431,6 +441,29 @@ model AdminAction {
   @@index([adminId])
   @@index([actionType])
   @@map("admin_actions")
+}
+
+model CampaignDispute {
+  id            String       @id @default(uuid())
+  taskId         String       @map("task_id")
+  task           Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  creatorId      String       @map("creator_id")
+  creator        User         @relation("CampaignDisputeCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  reason         String       @db.Text
+  evidence       Json?
+  status         DisputeStatus @default(OPEN)
+  adminComment   String?      @map("admin_comment") @db.Text
+  resolvedById   String?      @map("resolved_by_id")
+  resolvedBy     User?        @relation("CampaignDisputeResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt     DateTime?    @map("resolved_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([taskId])
+  @@index([creatorId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("campaign_disputes")
 }
 
 model BankAccount {
