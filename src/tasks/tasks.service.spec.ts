@@ -24,7 +24,7 @@ describe('TasksService Paystack payments', () => {
     paystackService = {
       initializePayment: jest.fn(),
       verifyPayment: jest.fn(),
-      verifyWebhookSignature: jest.fn(),
+      getKeyMode: jest.fn().mockReturnValue('test'),
     };
     configService = {
       get: jest.fn().mockReturnValue('https://app.leviate.test'),
@@ -46,7 +46,10 @@ describe('TasksService Paystack payments', () => {
     );
     prisma.user.findUnique.mockResolvedValue(buildCreator());
     paystackService.initializePayment.mockResolvedValue({
-      data: { authorization_url: 'https://checkout.paystack.com/reuse' },
+      data: {
+        authorization_url: 'https://checkout.paystack.com/reuse',
+        reference: 'TASK_EXISTING',
+      },
     });
     prisma.task.update.mockResolvedValue({});
 

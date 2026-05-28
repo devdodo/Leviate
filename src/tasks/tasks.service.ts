@@ -27,6 +27,7 @@ import {
   contributorNetPayoutAmount,
   resolveContributorSlotsForPersistence,
 } from '../common/utils/task-payout.util';
+import { parsePaystackMetadata } from '../common/utils/paystack-metadata.util';
 // Temporary workaround: Define enums as const objects until TypeScript server refreshes
 // These enums exist in the Prisma schema and will be available after migration is applied
 const TaskType = {
@@ -1829,11 +1830,12 @@ export class TasksService {
     });
 
     const paymentUrl = paymentResponse.data.authorization_url;
+    const paystackReference = paymentResponse.data.reference || paymentReference;
 
     await this.prisma.task.update({
       where: { id: taskId },
       data: {
-        paymentReference,
+        paymentReference: paystackReference,
         paymentAuthorizationUrl: paymentUrl,
         paymentStatus: 'PENDING' as any,
       } as any,
@@ -1841,15 +1843,19 @@ export class TasksService {
 
     // amountInKobo: Paystack SDK expects amount in kobo (Naira × 100)
     const amountInKobo = Math.round(totalAmount * 100);
+    const paystackPublicKey =
+      this.configService.get<string>('PAYSTACK_PUBLIC_KEY')?.trim() || '';
 
     return {
       message: 'Payment initiated. Use these values with Paystack SDK, then call POST /tasks/payment/verify with the reference when payment completes.',
       data: {
-        reference: paymentReference,
+        reference: paystackReference,
         amountInKobo,
         amount: totalAmount,
         email: user.email,
         authorizationUrl: paymentUrl,
+        paystackPublicKey,
+        paystackMode: this.paystackService.getKeyMode(),
         breakdown: {
           budget: budgetAmount,
           platformFee,
@@ -1879,15 +1885,22 @@ export class TasksService {
       };
     }
 
-    const verification = await this.paystackService.verifyPayment(paymentReference);
+    let verification: Awaited<ReturnType<PaystackService['verifyPayment']>>;
+    try {
+      verification = await this.paystackService.verifyPayment(paymentReference);
+    } catch (error) {
+      this.logger.warn(
+        `Paystack verify failed for reference=${paymentReference} mode=${this.paystackService.getKeyMode()}`,
+      );
+      throw error;
+    }
+
     const paystackData = verification.data as any;
     const paystackReference = (paystackData.reference as string) || paymentReference;
+    const metadata = parsePaystackMetadata(paystackData.metadata);
 
     if (!task) {
-      const metadataTaskId = paystackData.metadata?.taskId as string | undefined;
-      if (metadataTaskId) {
-        task = await this.prisma.task.findUnique({ where: { id: metadataTaskId } });
-      }
+      task = await this.findTaskForPayment(paymentReference, metadata.taskId);
     }
 
     if (!task) {
@@ -1915,7 +1928,7 @@ export class TasksService {
       throw new BadRequestException('Payment verification failed');
     }
 
-    this.assertPaystackVerificationMatchesTask(task, paystackData);
+    this.assertPaystackVerificationMatchesTask(task, paystackData, metadata);
 
     const updatedTask = await this.prisma.task.update({
       where: { id: task.id },
@@ -1942,21 +1955,42 @@ export class TasksService {
     };
   }
 
-  private assertPaystackVerificationMatchesTask(task: any, paystackData: any): void {
+  private async findTaskForPayment(reference: string, metadataTaskId?: string) {
+    if (metadataTaskId) {
+      const byMetadata = await this.prisma.task.findUnique({
+        where: { id: metadataTaskId },
+      });
+      if (byMetadata) {
+        return byMetadata;
+      }
+    }
+
+    return this.prisma.task.findUnique({
+      where: { paymentReference: reference } as any,
+    });
+  }
+
+  private assertPaystackVerificationMatchesTask(
+    task: any,
+    paystackData: any,
+    metadata: Record<string, string>,
+  ): void {
     const budgetAmount = Number(task.budget) || 0;
     const platformFeePercentage = Number(task.platformFeePercentage) || 5;
     const platformFee = (budgetAmount * platformFeePercentage) / 100;
     const expectedAmountKobo = Math.round((budgetAmount + platformFee) * 100);
+    const paidAmountKobo = Number(paystackData.amount);
 
-    if (Number(paystackData.amount) !== expectedAmountKobo) {
-      throw new BadRequestException('Payment amount does not match task total');
+    if (Math.abs(paidAmountKobo - expectedAmountKobo) > 1) {
+      throw new BadRequestException(
+        `Payment amount does not match task total (paid ${paidAmountKobo} kobo, expected ${expectedAmountKobo} kobo)`,
+      );
     }
 
     if (paystackData.currency && paystackData.currency !== 'NGN') {
       throw new BadRequestException('Payment currency must be NGN');
     }
 
-    const metadata = paystackData.metadata ?? {};
     if (metadata.taskId && metadata.taskId !== task.id) {
       throw new BadRequestException('Payment metadata does not match this task');
     }
@@ -1968,40 +2002,44 @@ export class TasksService {
     }
   }
 
+  private async markTaskPaidFromPaystack(
+    reference: string,
+    paystackData: any,
+  ): Promise<void> {
+    const metadata = parsePaystackMetadata(paystackData.metadata);
+    const task = await this.findTaskForPayment(reference, metadata.taskId);
+    if (!task || (task as any).paymentStatus === 'PAID') {
+      return;
+    }
+
+    this.assertPaystackVerificationMatchesTask(task, paystackData, metadata);
+
+    await this.prisma.task.update({
+      where: { id: task.id },
+      data: {
+        paymentStatus: 'PAID' as any,
+        paymentVerifiedAt: new Date(),
+        paymentReference: paystackData.reference || reference,
+      } as any,
+    });
+  }
+
   async handlePaymentWebhook(payload: any) {
     try {
       const event = payload.event;
       const data = payload.data;
 
       if (event === 'charge.success' || event === 'transaction.success') {
-        const reference = data.reference;
-
-        // Verify payment with Paystack
+        const reference = data.reference as string;
         const verification = await this.paystackService.verifyPayment(reference);
 
         if (verification.data.status === 'success') {
-          // Find and update task
-          const task = await this.prisma.task.findUnique({
-            where: { paymentReference: reference } as any,
-          });
-
-          if (task) {
-            await this.prisma.task.update({
-              where: { id: task.id },
-              data: {
-                paymentStatus: 'PAID' as any,
-                paymentVerifiedAt: new Date(),
-              } as any,
-            });
-          }
+          await this.markTaskPaidFromPaystack(reference, verification.data);
         }
       } else if (event === 'charge.failed' || event === 'transaction.failed') {
-        const reference = data.reference;
-
-        // Update task payment status to failed
-        const task = await this.prisma.task.findUnique({
-          where: { paymentReference: reference } as any,
-        });
+        const reference = data.reference as string;
+        const metadata = parsePaystackMetadata(data.metadata);
+        const task = await this.findTaskForPayment(reference, metadata.taskId);
 
         if (task) {
           await this.prisma.task.update({
