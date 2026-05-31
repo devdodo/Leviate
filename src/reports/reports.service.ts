@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { TaskStatus, ApplicationStatus } from '@prisma/client';
+import { contributorNetPayoutAmount } from '../common/utils/task-payout.util';
 
 @Injectable()
 export class ReportsService {
@@ -113,7 +114,8 @@ export class ReportsService {
     for (const task of tasks) {
       const verifiedSubmissions = task.applications.flatMap((a) => a.submissions);
       totalCompleted += verifiedSubmissions.length;
-      totalSpend += verifiedSubmissions.length * Number(task.budgetPerTask);
+      totalSpend +=
+        verifiedSubmissions.length * contributorNetPayoutAmount(task);
     }
 
     const completionRate =

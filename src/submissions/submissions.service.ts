@@ -7,7 +7,11 @@ import {
 import { PrismaService } from '../common/services/prisma.service';
 import { AIService } from '../common/services/ai.service';
 import { WalletService } from '../wallet/wallet.service';
-import { contributorNetPayoutAmount } from '../common/utils/task-payout.util';
+import {
+  contributorNetPayoutAmount,
+  countCompletedTaskPayouts,
+  resolveRequiredContributorSlots,
+} from '../common/utils/task-payout.util';
 import { ReputationService } from '../reputation/reputation.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import {
@@ -654,11 +658,26 @@ export class SubmissionsService {
       throw new NotFoundException('Task not found for payout');
     }
 
-    const taskerAmount = contributorNetPayoutAmount(task);
+    const requiredContributors = resolveRequiredContributorSlots(task);
+    const allottedPayout = contributorNetPayoutAmount(task);
 
-    if (taskerAmount <= 0) {
+    if (allottedPayout <= 0) {
       throw new BadRequestException('Task payout amount is invalid');
     }
+
+    const payoutsIssued = await countCompletedTaskPayouts(
+      this.prisma,
+      task.id,
+      TransactionCategory.TASK_PAYOUT,
+      TransactionStatus.COMPLETED,
+    );
+    if (payoutsIssued >= requiredContributors) {
+      throw new BadRequestException(
+        `All ${requiredContributors} allotted contributor payouts for this campaign have already been issued`,
+      );
+    }
+
+    const taskerAmount = allottedPayout;
 
     await this.walletService.credit(
       submission.taskerId,

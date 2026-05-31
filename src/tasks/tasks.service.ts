@@ -25,7 +25,10 @@ import {
 } from '@prisma/client';
 import {
   contributorNetPayoutAmount,
+  contributorPayoutBreakdown,
+  parsePositiveInt,
   resolveContributorSlotsForPersistence,
+  resolveRequiredContributorSlots,
 } from '../common/utils/task-payout.util';
 import { parsePaystackMetadata } from '../common/utils/paystack-metadata.util';
 import {
@@ -228,6 +231,12 @@ export class TasksService {
       this.logger.error(`Failed to generate AI brief: ${error.message}`);
       brief = createTaskDto.description || createTaskDto.title;
       llmContext = `Task: ${createTaskDto.title}\n${createTaskDto.description || ''}`;
+    }
+
+    if (!parsePositiveInt(createTaskDto.contributorCount)) {
+      throw new BadRequestException(
+        'contributorCount is required — it defines how many contributors the budget covers.',
+      );
     }
 
     const pricing = this.resolveCreateTaskPricing(createTaskDto);
@@ -695,18 +704,21 @@ export class TasksService {
     return filteredTasks;
   }
 
-  /** Net amount per contributor: (budget ÷ planned slots) after platform fee. */
-  private contributorNetPerShare(task: any): number {
-    return contributorNetPayoutAmount(task);
-  }
-
   /**
    * Contributor-facing task payload: no payment fields, no creator/creatorId, no submissions,
-   * no assigned-application ids. Gross budget hidden. `budgetPerTask` is net share per contributor.
+   * no assigned-application ids. Gross campaign budget and required headcount hidden.
+   * `payoutPerContributor` = fixed net pay for one completed contribution (budget ÷ required contributors).
    */
   private sanitizeTaskForContributorView(rawTask: any): any {
     if (!rawTask) return rawTask;
-    const net = this.contributorNetPerShare(rawTask);
+    const payout = contributorPayoutBreakdown({
+      budget: rawTask.budget,
+      contributorSlots: rawTask.contributorSlots,
+      taskType: rawTask.taskType,
+      audiencePreferences: rawTask.audiencePreferences,
+      targeting: rawTask.targeting,
+      platformFeePercentage: rawTask.platformFeePercentage,
+    });
     const {
       creator: _c,
       creatorId: _cid,
@@ -720,6 +732,7 @@ export class TasksService {
       totalBudget: _tb,
       platformFeePercentage: _pf,
       budgetPerTask: _legacyBpt,
+      contributorSlots: _slots,
       _count: rawCount,
       ...rest
     } = rawTask;
@@ -729,10 +742,13 @@ export class TasksService {
         ? { applications: (rawCount as any).applications }
         : undefined;
 
+    const allottedPayout = payout.netPerContributor.toFixed(2);
+
     return {
       ...rest,
       ...(_count !== undefined ? { _count } : {}),
-      budgetPerTask: net.toFixed(2),
+      payoutPerContributor: allottedPayout,
+      budgetPerTask: allottedPayout,
     };
   }
 
@@ -1101,7 +1117,7 @@ export class TasksService {
   }
 
   private toMarketplaceCard(task: any) {
-    const net = this.contributorNetPerShare(task);
+    const net = contributorNetPayoutAmount(task);
     return {
       id: task.id,
       title: task.title,
@@ -1121,7 +1137,7 @@ export class TasksService {
   }
 
   private toMarketplaceDetail(task: any) {
-    const net = this.contributorNetPerShare(task);
+    const net = contributorNetPayoutAmount(task);
     return {
       id: task.id,
       title: task.title,
@@ -1353,6 +1369,21 @@ export class TasksService {
 
     if (existingApplication) {
       throw new BadRequestException('You have already applied for this task');
+    }
+
+    const requiredContributors = resolveRequiredContributorSlots(task);
+    const filledContributorSlots = await this.prisma.taskApplication.count({
+      where: {
+        taskId,
+        status: {
+          in: [ApplicationStatus.APPROVED, ApplicationStatus.COMPLETED],
+        },
+      },
+    });
+    if (filledContributorSlots >= requiredContributors) {
+      throw new BadRequestException(
+        'This campaign already has the maximum number of contributors',
+      );
     }
 
     // Check reputation

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
+import { contributorNetPayoutAmount } from '../common/utils/task-payout.util';
 import { ReputationService } from '../reputation/reputation.service';
 import { ConfigService } from '@nestjs/config';
 import { UserType } from '@prisma/client';
@@ -212,24 +213,29 @@ export class RecommendationsService {
       select: {
         id: true,
         title: true,
-        budgetPerTask: true,
+        budget: true,
+        contributorSlots: true,
+        platformFeePercentage: true,
+        taskType: true,
+        audiencePreferences: true,
+        targeting: true,
         status: true,
         platforms: true,
       },
-      orderBy: {
-        budgetPerTask: 'desc', // Higher paying tasks first
-      },
-      take: limit,
+      take: Math.min(limit * 3, 50),
     });
 
-    // Convert Decimal to number and enum to string
-    return recommendedTasks.map((task) => ({
+    const withPayout = recommendedTasks.map((task) => ({
       id: task.id,
       title: task.title,
-      budgetPerTask: Number(task.budgetPerTask),
+      budgetPerTask: contributorNetPayoutAmount(task),
+      payoutPerContributor: contributorNetPayoutAmount(task),
       status: task.status.toString(),
       platforms: task.platforms,
     }));
+
+    withPayout.sort((a, b) => b.budgetPerTask - a.budgetPerTask);
+    return withPayout.slice(0, limit);
   }
 }
 

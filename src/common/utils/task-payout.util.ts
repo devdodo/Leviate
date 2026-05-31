@@ -14,6 +14,36 @@ const CONTRIBUTOR_COUNT_KEYS = new Set([
   'max_contributors',
 ]);
 
+/** Prisma Decimal, string, or number → number. */
+export function toNumber(value: unknown): number {
+  if (value === undefined || value === null || value === '') {
+    return 0;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === 'object' && value !== null && 'toNumber' in value) {
+    const n = (value as { toNumber: () => number }).toNumber();
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function resolvePlatformFeePercentage(value: unknown): number {
+  if (value === undefined || value === null || value === '') {
+    return 5;
+  }
+  const n = toNumber(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return 5;
+  }
+  if (n > 100) {
+    return 100;
+  }
+  return n;
+}
+
 export function parsePositiveInt(value: unknown): number | null {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -68,8 +98,8 @@ export function inferContributorSlotsFromBudgetFields(
   budget: unknown,
   budgetPerTask: unknown,
 ): number | null {
-  const gross = Number(budget ?? 0);
-  const perTask = Number(budgetPerTask ?? 0);
+  const gross = toNumber(budget);
+  const perTask = toNumber(budgetPerTask);
 
   if (!(gross > 0 && perTask > 0) || perTask >= gross * 0.99) {
     return null;
@@ -94,10 +124,10 @@ export type ContributorSlotsInput = {
 };
 
 /**
- * Planned contributor headcount used to split task budget (display + payout).
- * Does not use how many applications are approved at payout time.
+ * Required contributor headcount set when the campaign is created (stored as contributor_slots).
+ * Each completed, verified submission is paid budget ÷ this number — not split among whoever actually worked.
  */
-export function resolveContributorSlots(task: ContributorSlotsInput): number {
+export function resolveRequiredContributorSlots(task: ContributorSlotsInput): number {
   const fromColumn = parsePositiveInt(task.contributorSlots);
   if (fromColumn) {
     return fromColumn;
@@ -125,13 +155,85 @@ export function resolveContributorSlots(task: ContributorSlotsInput): number {
   return 1;
 }
 
+/** @deprecated Use resolveRequiredContributorSlots */
+export function resolveContributorSlots(task: ContributorSlotsInput): number {
+  return resolveRequiredContributorSlots(task);
+}
+
+/** Gross Naira for one contributor slot: total budget ÷ required contributors (not ÷ who actually worked). */
+export function contributorGrossPerShare(task: ContributorSlotsInput): number {
+  const gross = toNumber(task.budget);
+  const slots = resolveRequiredContributorSlots(task);
+  if (!(gross > 0 && slots > 0)) {
+    return 0;
+  }
+  return Math.round((gross / slots) * 100) / 100;
+}
+
+/** Net Naira each contributor earns after platform fee. */
 export function contributorNetPayoutAmount(task: ContributorSlotsInput): number {
-  const gross = Number(task.budget ?? 0);
-  const feePct = Number(task.platformFeePercentage ?? 5);
-  const slots = resolveContributorSlots(task);
-  const perGross = gross / slots;
+  const perGross = contributorGrossPerShare(task);
+  const feePct = resolvePlatformFeePercentage(task.platformFeePercentage);
   const net = (perGross * (100 - feePct)) / 100;
   return Math.round(net * 100) / 100;
+}
+
+export function contributorPayoutBreakdown(task: ContributorSlotsInput): {
+  requiredContributors: number;
+  grossPerContributor: number;
+  netPerContributor: number;
+  platformFeePercentage: number;
+} {
+  const requiredContributors = resolveRequiredContributorSlots(task);
+  const grossPerContributor = contributorGrossPerShare(task);
+  const platformFeePercentage = resolvePlatformFeePercentage(task.platformFeePercentage);
+  const netPerContributor = contributorNetPayoutAmount(task);
+  return {
+    requiredContributors,
+    grossPerContributor,
+    netPerContributor,
+    platformFeePercentage,
+  };
+}
+
+/** Completed TASK_PAYOUT wallet credits for a campaign (one per verified contributor slot used). */
+export async function countCompletedTaskPayouts(
+  prisma: {
+    taskSubmission: {
+      findMany: (args: {
+        where: { taskId: string };
+        select: { id: true };
+      }) => Promise<Array<{ id: string }>>;
+    };
+    walletTransaction: {
+      count: (args: {
+        where: {
+          referenceId: { in: string[] };
+          transactionCategory: string;
+          status: string;
+        };
+      }) => Promise<number>;
+    };
+  },
+  taskId: string,
+  transactionCategory: string,
+  transactionStatusCompleted: string,
+): Promise<number> {
+  const submissions = await prisma.taskSubmission.findMany({
+    where: { taskId },
+    select: { id: true },
+  });
+  const submissionIds = submissions.map((s) => s.id);
+  if (submissionIds.length === 0) {
+    return 0;
+  }
+  return prisma.walletTransaction.count({
+    where: {
+      referenceId: { in: submissionIds },
+      transactionCategory,
+      status: transactionStatusCompleted,
+    },
+  });
 }
 
 export function resolveContributorSlotsForPersistence(

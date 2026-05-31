@@ -191,14 +191,12 @@ export class CreateTaskDto {
   budget: number;
 
   @ApiProperty({
-    required: false,
     example: 10,
     minimum: 1,
     description:
-      'How many contributors will complete this task (total budget is split evenly across this count). Also accepted inside audiencePreferences.',
+      'Required number of contributors the campaign budget covers. Each verified contributor is paid (budget ÷ contributorCount) after platform fee — not divided by how many actually work.',
   })
-  @IsOptional()
   @IsNumber()
   @Min(1)
-  contributorCount?: number;
+  contributorCount: number;
 }
