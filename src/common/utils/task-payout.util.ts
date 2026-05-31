@@ -1,3 +1,5 @@
+import { TransactionCategory, TransactionStatus } from '@prisma/client';
+
 /** Keys that may hold planned contributor headcount on task JSON fields. */
 const CONTRIBUTOR_COUNT_KEYS = new Set([
   'contributorCount',
@@ -209,15 +211,15 @@ export async function countCompletedTaskPayouts(
       count: (args: {
         where: {
           referenceId: { in: string[] };
-          transactionCategory: string;
-          status: string;
+          transactionCategory: TransactionCategory;
+          status: TransactionStatus;
         };
       }) => Promise<number>;
     };
   },
   taskId: string,
-  transactionCategory: string,
-  transactionStatusCompleted: string,
+  transactionCategory: TransactionCategory,
+  transactionStatusCompleted: TransactionStatus,
 ): Promise<number> {
   const submissions = await prisma.taskSubmission.findMany({
     where: { taskId },
