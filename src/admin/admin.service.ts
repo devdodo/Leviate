@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
   ConflictException,
@@ -13,6 +14,7 @@ import { CampaignDisputeQueryDto } from './dto/campaign-dispute-query.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
 import {
+  Prisma,
   UserStatus,
   AdminActionType,
   UserRole,
@@ -26,6 +28,8 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private prisma: PrismaService,
     private walletService: WalletService,
@@ -261,6 +265,26 @@ export class AdminService {
   }
 
   async getTaskById(taskId: string) {
+    try {
+      return await this.fetchTaskByIdForAdmin(taskId);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2022'
+      ) {
+        const column =
+          error.meta && typeof error.meta === 'object' && 'column' in error.meta
+            ? String((error.meta as { column?: unknown }).column)
+            : 'unknown';
+        this.logger.error(
+          `Admin getTaskById schema mismatch (P2022) taskId=${taskId} column=${column}. Run: npx prisma migrate deploy`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async fetchTaskByIdForAdmin(taskId: string) {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       include: {

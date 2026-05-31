@@ -29,6 +29,7 @@ import { ApplyTaskDto } from './dto/apply-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
 import { CreateCampaignDisputeDto } from './dto/create-campaign-dispute.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
+import { EstimateTaskPricingDto } from './dto/estimate-task-pricing.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 
 @ApiTags('Tasks')
@@ -47,6 +48,20 @@ export class TasksController {
   })
   async getTaskTypes() {
     return this.tasksService.getTaskTypes();
+  }
+
+  @Post('pricing/estimate')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Estimate campaign budget and contributor slots from category + content type rates',
+    description:
+      'unitRate = category.amount + contentType.amount. totalBudget = unitRate × contributorSlots. ' +
+      'Provide contributorCount or budget (slots derived as floor(budget / unitRate)).',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async estimateTaskPricing(@Body() dto: EstimateTaskPricingDto) {
+    return this.tasksService.estimateTaskPricing(dto);
   }
 
   @Get('marketplace')

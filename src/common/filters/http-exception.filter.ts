@@ -133,8 +133,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       case 'P2022':
         return {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
-          clientMessage: this.genericClientMessage(),
-          code: 'SERVICE_UNAVAILABLE',
+          clientMessage:
+            'Database schema is out of date. Apply pending migrations (prisma migrate deploy) on the server.',
+          code: 'SCHEMA_OUT_OF_DATE',
         };
       default:
         return {

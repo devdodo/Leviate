@@ -118,7 +118,8 @@ export class CreateTaskDto {
     required: false,
     enum: ContentType,
     example: ContentType.VIDEO,
-    description: 'Content type: VIDEO, TEXT, or IMAGE',
+    description:
+      'Content type: VIDEO, TEXT, or IMAGE. Adds the content type amount from GET /tasks/task-types to the category rate per contributor.',
   })
   @IsOptional()
   @IsEnum(ContentType)
@@ -180,9 +181,10 @@ export class CreateTaskDto {
   buzzwords?: string[];
 
   @ApiProperty({
-    example: 500,
+    example: 80000,
     minimum: 5,
-    description: 'Budget amount in Naira',
+    description:
+      'Total campaign budget in Naira. Must equal (category rate + content type rate) × contributorCount from GET /tasks/task-types. Use POST /tasks/pricing/estimate to preview.',
   })
   @IsNumber()
   @Min(5)

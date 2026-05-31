@@ -28,6 +28,15 @@ import {
   resolveContributorSlotsForPersistence,
 } from '../common/utils/task-payout.util';
 import { parsePaystackMetadata } from '../common/utils/paystack-metadata.util';
+import {
+  estimateTaskPricing as computeTaskPricingEstimate,
+  getCategoryAmount,
+  getContentTypeAmount,
+  isBudgetAlignedWithPricing,
+  loadTaskPricingConfig,
+  TaskPricingConfig,
+} from '../common/utils/task-pricing.util';
+import { EstimateTaskPricingDto } from './dto/estimate-task-pricing.dto';
 // Temporary workaround: Define enums as const objects until TypeScript server refreshes
 // These enums exist in the Prisma schema and will be available after migration is applied
 const TaskType = {
@@ -54,6 +63,7 @@ type ContentType = typeof ContentType[keyof typeof ContentType];
 @Injectable()
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
+  private readonly taskPricing: TaskPricingConfig;
 
   constructor(
     private prisma: PrismaService,
@@ -62,7 +72,11 @@ export class TasksService {
     private paystackService: PaystackService,
     private configService: ConfigService,
     private walletService: WalletService,
-  ) {}
+  ) {
+    this.taskPricing = loadTaskPricingConfig((key) =>
+      this.configService.get<string>(key),
+    );
+  }
 
   /**
    * Returns available task types and categories for task creation.
@@ -74,25 +88,25 @@ export class TasksService {
         value: TaskCategory.LIKE_SHARE_SAVE_REPOST,
         label: 'Engagement (Likes, Repost, Retweet)',
         description: 'Get likes, reposts, shares, or saves on your content',
-        amount: 1000,
+        amount: getCategoryAmount(this.taskPricing, TaskCategory.LIKE_SHARE_SAVE_REPOST),
       },
       {
         value: TaskCategory.COMMENT_POST,
         label: 'Comments',
         description: 'Get comments on your post',
-        amount: 2000,
+        amount: getCategoryAmount(this.taskPricing, TaskCategory.COMMENT_POST),
       },
       {
         value: TaskCategory.MAKE_POST,
         label: 'Create Post',
         description: 'Have contributors create and publish a post',
-        amount: 5000,
+        amount: getCategoryAmount(this.taskPricing, TaskCategory.MAKE_POST),
       },
       {
         value: TaskCategory.FOLLOW_ACCOUNT,
         label: 'Follow',
         description: 'Get contributors to follow your account',
-        amount: 1000,
+        amount: getCategoryAmount(this.taskPricing, TaskCategory.FOLLOW_ACCOUNT),
       },
     ];
 
@@ -102,9 +116,21 @@ export class TasksService {
     ];
 
     const contentTypes = [
-      { value: ContentType.VIDEO, label: 'Video' },
-      { value: ContentType.TEXT, label: 'Text' },
-      { value: ContentType.IMAGE, label: 'Image' },
+      {
+        value: ContentType.VIDEO,
+        label: 'Video',
+        amount: getContentTypeAmount(this.taskPricing, ContentType.VIDEO),
+      },
+      {
+        value: ContentType.TEXT,
+        label: 'Text',
+        amount: getContentTypeAmount(this.taskPricing, ContentType.TEXT),
+      },
+      {
+        value: ContentType.IMAGE,
+        label: 'Image',
+        amount: getContentTypeAmount(this.taskPricing, ContentType.IMAGE),
+      },
     ];
 
     const scheduleTypes = [
@@ -119,8 +145,45 @@ export class TasksService {
         taskTypes,
         contentTypes,
         scheduleTypes,
+        pricing: {
+          formula:
+            'unitRate = category.amount + contentType.amount (when selected); totalBudget = unitRate × contributorSlots',
+          currency: 'NGN',
+        },
       },
     };
+  }
+
+  estimateTaskPricing(dto: EstimateTaskPricingDto) {
+    const estimate = computeTaskPricingEstimate(this.taskPricing, {
+      category: dto.category,
+      contentType: dto.contentType,
+      contributorCount: dto.contributorCount,
+      budget: dto.budget,
+    });
+
+    return {
+      message: 'Task pricing estimated successfully',
+      data: estimate,
+    };
+  }
+
+  private resolveCreateTaskPricing(createTaskDto: CreateTaskDto) {
+    const estimate = computeTaskPricingEstimate(this.taskPricing, {
+      category: createTaskDto.category,
+      contentType: createTaskDto.contentType,
+      contributorCount: createTaskDto.contributorCount,
+      budget: createTaskDto.budget,
+    });
+
+    if (!isBudgetAlignedWithPricing(createTaskDto.budget, estimate)) {
+      throw new BadRequestException(
+        `Budget must be ${estimate.totalBudget} NGN (${estimate.unitRate} per contributor × ${estimate.contributorSlots} contributors). ` +
+          `Breakdown: category ${estimate.categoryAmount} + content type ${estimate.contentTypeAmount}.`,
+      );
+    }
+
+    return estimate;
   }
 
   async createTask(userId: string, createTaskDto: CreateTaskDto) {
@@ -167,14 +230,9 @@ export class TasksService {
       llmContext = `Task: ${createTaskDto.title}\n${createTaskDto.description || ''}`;
     }
 
-    const contributorSlots = resolveContributorSlotsForPersistence({
-      explicitContributorCount: createTaskDto.contributorCount,
-      taskType: createTaskDto.taskType,
-      budget: createTaskDto.budget,
-      audiencePreferences: createTaskDto.audiencePreferences,
-      targeting: createTaskDto.targeting,
-    });
-    const grossPerContributor = createTaskDto.budget / contributorSlots;
+    const pricing = this.resolveCreateTaskPricing(createTaskDto);
+    const contributorSlots = pricing.contributorSlots;
+    const grossPerContributor = pricing.grossPerContributor;
 
     // Draft only — payment is checked in publishTask(), not here.
     const task = await this.prisma.task.create({
@@ -1171,32 +1229,61 @@ export class TasksService {
       const taskCategoryForResource = updateTaskDto.category ?? (task as any).category;
       updateData.resourceLink = taskCategoryForResource === 'MAKE_POST' ? null : updateTaskDto.resourceLink;
     }
-    if (updateTaskDto.budget) updateData.budget = updateTaskDto.budget;
     if (updateTaskDto.audiencePreferences !== undefined) {
       updateData.audiencePreferences = updateTaskDto.audiencePreferences;
     }
 
+    const mergedCategory = updateTaskDto.category ?? (task as any).category;
+    const mergedContentType =
+      updateTaskDto.contentType !== undefined
+        ? updateTaskDto.contentType
+        : (task as any).contentType;
     const mergedBudget = updateTaskDto.budget ?? Number((task as any).budget);
-    const mergedPrefs =
-      updateTaskDto.audiencePreferences ?? (task as any).audiencePreferences;
-    const mergedTargeting = updateTaskDto.targeting ?? (task as any).targeting;
-    const slots = resolveContributorSlotsForPersistence({
-      explicitContributorCount: updateTaskDto.contributorCount,
-      contributorSlots: (task as any).contributorSlots,
-      taskType: updateTaskDto.taskType ?? (task as any).taskType,
-      budget: mergedBudget,
-      budgetPerTask: (task as any).budgetPerTask,
-      audiencePreferences: mergedPrefs,
-      targeting: mergedTargeting,
-    });
-    if (
-      updateTaskDto.contributorCount !== undefined ||
-      updateTaskDto.audiencePreferences !== undefined ||
-      updateTaskDto.budget !== undefined
-    ) {
-      updateData.contributorSlots = slots;
-      updateData.budgetPerTask = mergedBudget / slots;
-      updateData.totalBudget = mergedBudget;
+    const pricingFieldsTouched =
+      updateTaskDto.budget !== undefined ||
+      updateTaskDto.category !== undefined ||
+      updateTaskDto.contentType !== undefined ||
+      updateTaskDto.contributorCount !== undefined;
+
+    if (pricingFieldsTouched) {
+      const estimate = computeTaskPricingEstimate(this.taskPricing, {
+        category: mergedCategory,
+        contentType: mergedContentType,
+        contributorCount: updateTaskDto.contributorCount ?? (task as any).contributorSlots,
+        budget: mergedBudget,
+      });
+
+      if (!isBudgetAlignedWithPricing(mergedBudget, estimate)) {
+        throw new BadRequestException(
+          `Budget must be ${estimate.totalBudget} NGN (${estimate.unitRate} × ${estimate.contributorSlots} contributors).`,
+        );
+      }
+
+      updateData.contributorSlots = estimate.contributorSlots;
+      updateData.budgetPerTask = estimate.grossPerContributor;
+      updateData.totalBudget = estimate.totalBudget;
+      updateData.budget = mergedBudget;
+    } else {
+      const mergedPrefs =
+        updateTaskDto.audiencePreferences ?? (task as any).audiencePreferences;
+      const mergedTargeting = updateTaskDto.targeting ?? (task as any).targeting;
+      const slots = resolveContributorSlotsForPersistence({
+        explicitContributorCount: updateTaskDto.contributorCount,
+        contributorSlots: (task as any).contributorSlots,
+        taskType: updateTaskDto.taskType ?? (task as any).taskType,
+        budget: mergedBudget,
+        budgetPerTask: (task as any).budgetPerTask,
+        audiencePreferences: mergedPrefs,
+        targeting: mergedTargeting,
+      });
+      if (
+        updateTaskDto.contributorCount !== undefined ||
+        updateTaskDto.audiencePreferences !== undefined
+      ) {
+        updateData.contributorSlots = slots;
+        updateData.budgetPerTask = mergedBudget / slots;
+        updateData.totalBudget = mergedBudget;
+      }
     }
 
     if (updateTaskDto.targeting) updateData.targeting = updateTaskDto.targeting as any;
@@ -1867,7 +1954,12 @@ export class TasksService {
 
   async verifyPayment(userId: string, reference: string) {
     const paymentReference = reference.trim();
+    const logCtx = { step: 'verifyPayment', reference: paymentReference, userId };
+
+    this.logger.log(`[payment-verify] start ${JSON.stringify(logCtx)}`);
+
     if (!paymentReference) {
+      this.logger.warn(`[payment-verify] abort: empty reference ${JSON.stringify(logCtx)}`);
       throw new BadRequestException('Payment reference is required');
     }
 
@@ -1875,10 +1967,18 @@ export class TasksService {
       where: { paymentReference } as any,
     });
 
+    this.logger.log(
+      `[payment-verify] task_lookup_by_reference found=${!!task} taskId=${task?.id ?? null} paymentStatus=${task ? (task as any).paymentStatus : null}`,
+    );
+
     if (task && (task as any).paymentStatus === 'PAID') {
       if (task.creatorId !== userId) {
+        this.logger.warn(
+          `[payment-verify] abort: already_paid_wrong_owner taskId=${task.id} owner=${task.creatorId}`,
+        );
         throw new ForbiddenException('You can only verify payment for your own tasks');
       }
+      this.logger.log(`[payment-verify] idempotent already PAID taskId=${task.id}`);
       return {
         message: 'Payment already verified',
         data: { task, payment: null },
@@ -1890,30 +1990,45 @@ export class TasksService {
       verification = await this.paystackService.verifyPayment(paymentReference);
     } catch (error) {
       this.logger.warn(
-        `Paystack verify failed for reference=${paymentReference} mode=${this.paystackService.getKeyMode()}`,
+        `[payment-verify] paystack_api_error reference=${paymentReference} mode=${this.paystackService.getKeyMode()} message=${error instanceof Error ? error.message : String(error)}`,
       );
       throw error;
     }
 
     const paystackData = verification.data as any;
+    this.logger.log(
+      `[payment-verify] paystack_response ${JSON.stringify(this.summarizePaystackTransaction(paystackData))}`,
+    );
+
     const paystackReference = (paystackData.reference as string) || paymentReference;
     const metadata = parsePaystackMetadata(paystackData.metadata);
+    this.logger.log(`[payment-verify] parsed_metadata ${JSON.stringify(metadata)}`);
 
     if (!task) {
       task = await this.findTaskForPayment(paymentReference, metadata.taskId);
+      this.logger.log(
+        `[payment-verify] task_lookup_fallback found=${!!task} taskId=${task?.id ?? null} metadataTaskId=${metadata.taskId ?? null}`,
+      );
     }
 
     if (!task) {
+      this.logger.warn(
+        `[payment-verify] abort: no_task_for_reference reference=${paymentReference} metadata=${JSON.stringify(metadata)}`,
+      );
       throw new NotFoundException(
         'Payment succeeded on Paystack but no task is linked to this reference. Contact support with the reference.',
       );
     }
 
     if (task.creatorId !== userId) {
+      this.logger.warn(
+        `[payment-verify] abort: wrong_owner taskId=${task.id} creatorId=${task.creatorId} userId=${userId}`,
+      );
       throw new ForbiddenException('You can only verify payment for your own tasks');
     }
 
     if ((task as any).paymentStatus === 'PAID') {
+      this.logger.log(`[payment-verify] idempotent already PAID (post-paystack) taskId=${task.id}`);
       return {
         message: 'Payment already verified',
         data: { task, payment: null },
@@ -1921,11 +2036,23 @@ export class TasksService {
     }
 
     if (paystackData.status !== 'success') {
+      const gatewayResponse = paystackData.gateway_response ?? paystackData.message ?? null;
+      this.logger.warn(
+        `[payment-verify] abort: paystack_status_not_success taskId=${task.id} ${JSON.stringify({
+          paystackStatus: paystackData.status,
+          gatewayResponse,
+          reference: paystackReference,
+        })}`,
+      );
       await this.prisma.task.update({
         where: { id: task.id },
         data: { paymentStatus: 'FAILED' as any } as any,
       });
-      throw new BadRequestException('Payment verification failed');
+      throw new BadRequestException(
+        `Payment verification failed: Paystack transaction status is "${paystackData.status}"` +
+          (gatewayResponse ? ` (${gatewayResponse})` : '') +
+          '. Complete payment on Paystack or use a successful charge reference.',
+      );
     }
 
     this.assertPaystackVerificationMatchesTask(task, paystackData, metadata);
@@ -1940,6 +2067,10 @@ export class TasksService {
     });
 
     const paidAt = paystackData.paid_at ?? paystackData.paidAt ?? null;
+
+    this.logger.log(
+      `[payment-verify] success taskId=${task.id} reference=${paystackReference} amountKobo=${paystackData.amount}`,
+    );
 
     return {
       message: 'Payment verified successfully',
@@ -1970,6 +2101,21 @@ export class TasksService {
     });
   }
 
+  /** Safe fields for logs (no card/customer PII). */
+  private summarizePaystackTransaction(data: any): Record<string, unknown> {
+    if (!data) return {};
+    return {
+      reference: data.reference,
+      status: data.status,
+      amount: data.amount,
+      currency: data.currency,
+      gateway_response: data.gateway_response,
+      paid_at: data.paid_at ?? data.paidAt,
+      channel: data.channel,
+      metadata: parsePaystackMetadata(data.metadata),
+    };
+  }
+
   private assertPaystackVerificationMatchesTask(
     task: any,
     paystackData: any,
@@ -1981,23 +2127,42 @@ export class TasksService {
     const expectedAmountKobo = Math.round((budgetAmount + platformFee) * 100);
     const paidAmountKobo = Number(paystackData.amount);
 
+    this.logger.log(
+      `[payment-verify] assert_match taskId=${task.id} paidKobo=${paidAmountKobo} expectedKobo=${expectedAmountKobo} metadata=${JSON.stringify(metadata)}`,
+    );
+
     if (Math.abs(paidAmountKobo - expectedAmountKobo) > 1) {
+      this.logger.warn(
+        `[payment-verify] abort: amount_mismatch taskId=${task.id} paid=${paidAmountKobo} expected=${expectedAmountKobo} budget=${budgetAmount} feePct=${platformFeePercentage}`,
+      );
       throw new BadRequestException(
         `Payment amount does not match task total (paid ${paidAmountKobo} kobo, expected ${expectedAmountKobo} kobo)`,
       );
     }
 
     if (paystackData.currency && paystackData.currency !== 'NGN') {
+      this.logger.warn(
+        `[payment-verify] abort: invalid_currency taskId=${task.id} currency=${paystackData.currency}`,
+      );
       throw new BadRequestException('Payment currency must be NGN');
     }
 
     if (metadata.taskId && metadata.taskId !== task.id) {
+      this.logger.warn(
+        `[payment-verify] abort: metadata_task_mismatch taskId=${task.id} metadataTaskId=${metadata.taskId}`,
+      );
       throw new BadRequestException('Payment metadata does not match this task');
     }
     if (metadata.userId && metadata.userId !== task.creatorId) {
+      this.logger.warn(
+        `[payment-verify] abort: metadata_owner_mismatch taskId=${task.id} metadataUserId=${metadata.userId} creatorId=${task.creatorId}`,
+      );
       throw new BadRequestException('Payment metadata does not match task owner');
     }
     if (metadata.type && metadata.type !== 'TASK_PAYMENT') {
+      this.logger.warn(
+        `[payment-verify] abort: metadata_type_mismatch taskId=${task.id} metadataType=${metadata.type}`,
+      );
       throw new BadRequestException('Payment metadata type is invalid');
     }
   }

@@ -152,6 +152,9 @@ export class PaystackService {
       const data = await response.json();
 
       if (!response.ok || !data.status) {
+        this.logger.warn(
+          `[paystack] api_error ${method} ${endpoint} http=${response.status} message=${data.message ?? response.statusText}`,
+        );
         throw new BadRequestException(
           data.message || `Paystack API error: ${response.statusText}`,
         );
@@ -159,7 +162,9 @@ export class PaystackService {
 
       return data;
     } catch (error) {
-      this.logger.error(`Paystack API error: ${error.message}`, error.stack);
+      if (!(error instanceof BadRequestException)) {
+        this.logger.error(`Paystack API error: ${error.message}`, error.stack);
+      }
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -402,14 +407,24 @@ export class PaystackService {
   }> {
     const trimmed = reference.trim();
     const encoded = encodeURIComponent(trimmed);
+    this.logger.log(
+      `[paystack] verify_transaction request reference=${trimmed} mode=${this.getKeyMode()}`,
+    );
     try {
       const response = await this.makeRequest<{
         status: boolean;
         message: string;
         data: any;
       }>(`/transaction/verify/${encoded}`);
+      const d = response.data;
+      this.logger.log(
+        `[paystack] verify_transaction ok reference=${d?.reference} txStatus=${d?.status} amount=${d?.amount} gateway=${d?.gateway_response ?? 'n/a'}`,
+      );
       return response;
     } catch (error) {
+      this.logger.warn(
+        `[paystack] verify_transaction failed reference=${trimmed} mode=${this.getKeyMode()} error=${error instanceof Error ? error.message : String(error)}`,
+      );
       if (
         error instanceof BadRequestException &&
         PaystackService.isReferenceNotFoundMessage(error.message)
