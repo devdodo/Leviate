@@ -371,6 +371,172 @@ This is a template brief. Configure AI service for AI-generated briefs.`;
   }
 
   /**
+   * Moderate task content before creation.
+   * Checks for explicit material and instructions that conflict with the task's stated category.
+   * Fails open (approved) when no AI provider is configured so legitimate tasks are never blocked
+   * by a missing API key.
+   */
+  async moderateTaskContent(taskData: {
+    category: string;
+    title: string;
+    description?: string;
+    commentsInstructions?: string;
+    hashtags?: string[];
+    buzzwords?: string[];
+  }): Promise<{ approved: boolean; violations: string[]; reason: string }> {
+    if (!this.openaiApiKey && !this.anthropicApiKey) {
+      this.logger.warn('No AI API key configured. Skipping content moderation.');
+      return { approved: true, violations: [], reason: 'Moderation skipped — AI not configured' };
+    }
+
+    const prompt = this.buildModerationPrompt(taskData);
+
+    try {
+      if (this.openaiApiKey) {
+        return await this.moderateWithOpenAI(prompt);
+      }
+      return await this.moderateWithAnthropic(prompt);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Content moderation failed (${msg.slice(0, 120)}); allowing task through.`);
+      return { approved: true, violations: [], reason: 'Moderation unavailable' };
+    }
+  }
+
+  private buildModerationPrompt(taskData: {
+    category: string;
+    title: string;
+    description?: string;
+    commentsInstructions?: string;
+    hashtags?: string[];
+    buzzwords?: string[];
+  }): string {
+    const categoryDescriptions: Record<string, string> = {
+      LIKE_SHARE_SAVE_REPOST:
+        'Contributor only likes, shares, saves, or reposts existing content. No off-platform action is ever needed.',
+      COMMENT_POST:
+        'Contributor only leaves a comment on an existing post. No off-platform action is ever needed.',
+      FOLLOW_ACCOUNT:
+        'Contributor only follows a social media account. No off-platform action is ever needed.',
+      MAKE_POST:
+        'Contributor creates and publishes original content. Content guidelines and hashtags are fine, but asking contributors to send personal photos to the creator, call a phone number, or message on WhatsApp is not allowed.',
+    };
+
+    const categoryDesc =
+      categoryDescriptions[taskData.category] ??
+      'Contributor performs the stated social media action.';
+
+    return `You are a content moderation system for a social media task marketplace. Review the task below for two issues:
+
+1. EXPLICIT CONTENT — adult, sexual, violent, hateful, or otherwise inappropriate material.
+2. CONFLICTING INSTRUCTIONS — the task instructions require actions that contradict or go beyond what the task category permits.
+
+Category: ${taskData.category}
+Category rule: ${categoryDesc}
+
+--- TASK CONTENT ---
+Title: ${taskData.title}
+Description: ${taskData.description ?? 'N/A'}
+Special instructions: ${taskData.commentsInstructions ?? 'N/A'}
+Hashtags: ${taskData.hashtags?.join(', ') || 'N/A'}
+Buzzwords: ${taskData.buzzwords?.join(', ') || 'N/A'}
+--- END TASK CONTENT ---
+
+EXAMPLES OF CONFLICTING INSTRUCTIONS (violations):
+- A LIKE/SHARE task that says "call this number", "text us on WhatsApp", or "send us a photo"
+- A FOLLOW task that asks contributors to DM personal details or click an off-platform link to verify
+- A COMMENT task that directs contributors to also send a WhatsApp message or submit personal info
+- Any task category that collects phone numbers, email addresses, or identification from contributors
+
+Respond ONLY with a valid JSON object — no markdown, no code fences:
+{
+  "approved": true or false,
+  "violations": ["concise description of each violation found, or empty array if none"],
+  "reason": "one-sentence summary — 'Content approved' if approved, or the primary reason for rejection"
+}`;
+  }
+
+  private async moderateWithOpenAI(
+    prompt: string,
+  ): Promise<{ approved: boolean; violations: string[]; reason: string }> {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.openaiModel,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a strict content moderation assistant. Respond only with valid JSON as instructed.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.1,
+        max_tokens: 300,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const raw = data.choices[0]?.message?.content ?? '{}';
+    return this.parseModerationResponse(raw);
+  }
+
+  private async moderateWithAnthropic(
+    prompt: string,
+  ): Promise<{ approved: boolean; violations: string[]; reason: string }> {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.anthropicApiKey!,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: this.anthropicModel,
+        max_tokens: 300,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Anthropic API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const raw = data.content[0]?.text ?? '{}';
+    return this.parseModerationResponse(raw);
+  }
+
+  private parseModerationResponse(raw: string): {
+    approved: boolean;
+    violations: string[];
+    reason: string;
+  } {
+    try {
+      // Strip markdown code fences the model may have added despite instructions
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return {
+        approved: Boolean(parsed.approved),
+        violations: Array.isArray(parsed.violations) ? parsed.violations : [],
+        reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      };
+    } catch {
+      this.logger.warn(`Could not parse moderation response: ${raw.slice(0, 200)}`);
+      // Fail open — don't block the creator if our parser breaks
+      return { approved: true, violations: [], reason: 'Moderation parse error' };
+    }
+  }
+
+  /**
    * Generate a compelling task summary/ad copy for prospective contributors
    * This will be displayed to attract contributors to apply for the task
    */

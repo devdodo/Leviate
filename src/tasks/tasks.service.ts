@@ -206,6 +206,23 @@ export class TasksService {
       throw new BadRequestException('Please verify your email first');
     }
 
+    // Content moderation — check for explicit content and conflicting instructions
+    const moderation = await this.aiService.moderateTaskContent({
+      category: createTaskDto.category,
+      title: createTaskDto.title,
+      description: createTaskDto.description,
+      commentsInstructions: createTaskDto.commentsInstructions,
+      hashtags: createTaskDto.hashtags,
+      buzzwords: createTaskDto.buzzwords,
+    });
+    if (!moderation.approved) {
+      throw new BadRequestException({
+        message: 'Task content did not pass our content policy check.',
+        reason: moderation.reason,
+        violations: moderation.violations,
+      });
+    }
+
     // All tasks are created as DRAFT by default
     // They must be published to become visible to contributors
     const status = TaskStatus.DRAFT;
@@ -227,7 +244,7 @@ export class TasksService {
       });
       brief = aiResult.brief;
       llmContext = aiResult.llmContext;
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Failed to generate AI brief: ${error.message}`);
       brief = createTaskDto.description || createTaskDto.title;
       llmContext = `Task: ${createTaskDto.title}\n${createTaskDto.description || ''}`;
@@ -1632,6 +1649,138 @@ export class TasksService {
       data: {
         task: endedTask,
         settlement,
+      },
+    };
+  }
+
+  async terminateTask(userId: string, taskId: string) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+    if (task.creatorId !== userId) {
+      throw new ForbiddenException('You can only terminate your own campaigns');
+    }
+    if (
+      task.status !== TaskStatus.ACTIVE &&
+      task.status !== TaskStatus.PAUSED
+    ) {
+      throw new BadRequestException(
+        'Only active or paused campaigns can be terminated',
+      );
+    }
+
+    const feePercentage = parseFloat(
+      this.configService.get<string>(
+        'CAMPAIGN_TERMINATION_FEE_PERCENTAGE',
+        '10',
+      ),
+    );
+
+    // Calculate how much has already been paid out to contributors
+    const submissions = await this.prisma.taskSubmission.findMany({
+      where: { taskId },
+      select: { id: true },
+    });
+    const submissionIds = submissions.map((s) => s.id);
+    const paidOutAggregate = submissionIds.length
+      ? await this.prisma.walletTransaction.aggregate({
+          where: {
+            referenceId: { in: submissionIds },
+            transactionCategory: TransactionCategory.TASK_PAYOUT,
+            status: TransactionStatus.COMPLETED,
+          },
+          _sum: { amount: true },
+        })
+      : { _sum: { amount: null } };
+
+    const paidOutAmount = Number(paidOutAggregate._sum.amount ?? 0);
+    const grossBudget = Number(task.budget ?? 0);
+    const grossRemainingAmount = Math.max(0, grossBudget - paidOutAmount);
+    const terminationFeeAmount = grossRemainingAmount * (feePercentage / 100);
+    const netRefundAmount = grossRemainingAmount - terminationFeeAmount;
+
+    // Credit creator with net refund (after termination fee deduction)
+    if (netRefundAmount > 0) {
+      await this.walletService.credit(
+        task.creatorId,
+        netRefundAmount,
+        TransactionCategory.REFUND,
+        `Campaign termination refund for: ${task.title} (${feePercentage}% fee applied)`,
+        { referenceId: task.id, taskId: task.id },
+      );
+    }
+
+    // Record the termination request for admin correspondence
+    const terminationRequest =
+      await this.prisma.campaignTerminationRequest.create({
+        data: {
+          taskId,
+          creatorId: userId,
+          grossRemainingAmount,
+          terminationFeePercentage: feePercentage,
+          terminationFeeAmount,
+          netRefundAmount,
+        },
+      });
+
+    const terminatedTask = await this.prisma.task.update({
+      where: { id: taskId },
+      data: { status: TaskStatus.TERMINATED },
+    });
+
+    // Notify all admins to manually correspond with the creator about fund transfer
+    const admins = await this.prisma.user.findMany({
+      where: { role: { in: ['ADMIN', 'SUPERADMIN'] as any }, status: 'ACTIVE' as any },
+    });
+    await Promise.all(
+      admins.map((admin) =>
+        this.prisma.notification.create({
+          data: {
+            receiverId: admin.id,
+            type: 'SYSTEM_ALERT',
+            title: 'Campaign Terminated — Action Required',
+            message: `Creator terminated campaign "${task.title}". Net refund: ₦${netRefundAmount.toFixed(2)} (fee: ₦${terminationFeeAmount.toFixed(2)}). Please contact the creator to arrange the fund transfer.`,
+            data: {
+              taskId,
+              terminationRequestId: terminationRequest.id,
+              grossRemainingAmount,
+              terminationFeeAmount,
+              netRefundAmount,
+            },
+          },
+        }),
+      ),
+    );
+
+    // Notify creator
+    await this.prisma.notification.create({
+      data: {
+        receiverId: userId,
+        type: 'SYSTEM_ALERT',
+        title: 'Campaign terminated',
+        message: `Your campaign "${task.title}" has been terminated. A refund of ₦${netRefundAmount.toFixed(2)} is being processed (${feePercentage}% termination fee applied). Our team will be in touch to arrange the transfer.`,
+        data: {
+          taskId,
+          terminationRequestId: terminationRequest.id,
+          grossRemainingAmount,
+          terminationFeeAmount,
+          netRefundAmount,
+        },
+      },
+    });
+
+    return {
+      message: 'Campaign terminated successfully',
+      data: {
+        task: terminatedTask,
+        termination: {
+          grossRemainingAmount,
+          terminationFeePercentage: feePercentage,
+          terminationFeeAmount,
+          netRefundAmount,
+          requestId: terminationRequest.id,
+        },
       },
     };
   }

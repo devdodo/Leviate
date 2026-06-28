@@ -61,6 +61,13 @@ enum TaskStatus {
   PAUSED
   COMPLETED
   EXPIRED
+  TERMINATED
+}
+
+enum TerminationRequestStatus {
+  PENDING
+  PROCESSED
+  CANCELLED
 }
 
 enum PaymentStatus {
@@ -97,6 +104,7 @@ enum TransactionCategory {
   REFUND
   PLATFORM_FEE
   DEPOSIT
+  TERMINATION_FEE
 }
 
 enum TransactionStatus {
@@ -193,6 +201,7 @@ model User {
   reviewedSocialVerifications UserSocialVerification[] @relation("SocialVerificationReviewer")
   creatorDisputes       CampaignDispute[] @relation("CampaignDisputeCreator")
   resolvedDisputes      CampaignDispute[] @relation("CampaignDisputeResolver")
+  terminationRequests   CampaignTerminationRequest[] @relation("TerminationRequestCreator")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -292,9 +301,10 @@ model Task {
   totalBudget           Decimal?     @map("total_budget") @db.Decimal(10, 2) // Deprecated
 
   // Relations
-  applications TaskApplication[]
-  submissions  TaskSubmission[]
-  disputes     CampaignDispute[]
+  applications          TaskApplication[]
+  submissions           TaskSubmission[]
+  disputes              CampaignDispute[]
+  terminationRequests   CampaignTerminationRequest[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -464,6 +474,29 @@ model CampaignDispute {
   @@index([status])
   @@index([createdAt])
   @@map("campaign_disputes")
+}
+
+model CampaignTerminationRequest {
+  id                        String                   @id @default(uuid())
+  taskId                    String                   @map("task_id")
+  task                      Task                     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  creatorId                 String                   @map("creator_id")
+  creator                   User                     @relation("TerminationRequestCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  grossRemainingAmount      Decimal                  @map("gross_remaining_amount") @db.Decimal(10, 2)
+  terminationFeePercentage  Decimal                  @map("termination_fee_percentage") @db.Decimal(5, 2)
+  terminationFeeAmount      Decimal                  @map("termination_fee_amount") @db.Decimal(10, 2)
+  netRefundAmount           Decimal                  @map("net_refund_amount") @db.Decimal(10, 2)
+  status                    TerminationRequestStatus @default(PENDING)
+  adminNote                 String?                  @map("admin_note") @db.Text
+  processedAt               DateTime?                @map("processed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([taskId])
+  @@index([creatorId])
+  @@index([status])
+  @@map("campaign_termination_requests")
 }
 
 model BankAccount {

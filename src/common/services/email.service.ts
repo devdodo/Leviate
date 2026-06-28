@@ -1,196 +1,68 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MailerService } from '@nestjs-modules/mailer';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private readonly zeptomailToken: string;
-  private readonly fromEmail: string;
-  private readonly fromName: string;
-  private readonly bounceAddress: string;
-  private readonly templateIds: Map<string, string>;
+  private readonly gmailUser: string;
 
-  constructor(private configService: ConfigService) {
-    this.zeptomailToken = this.configService.get<string>('ZEPTOMAIL_TOKEN') || '';
-    this.fromEmail = this.configService.get<string>('FROM_EMAIL') || 'noreply@leviateapp.com';
-    this.fromName = this.configService.get<string>('FROM_NAME') || 'Leviate';
-    // Bounce address must be verified in Zeptomail dashboard
-    // If not set or invalid, Zeptomail will use the default bounce address
-    this.bounceAddress =
-      this.configService.get<string>('ZEPTOMAIL_BOUNCE_ADDRESS') || '';
-
-    // Load template IDs from environment
-    this.templateIds = new Map();
-    const templateKeys = [
-      'ZEPTOMAIL_TEMPLATE_OTP_VERIFICATION',
-      'ZEPTOMAIL_TEMPLATE_PASSWORD_RESET',
-      'ZEPTOMAIL_TEMPLATE_WELCOME',
-      'ZEPTOMAIL_TEMPLATE_WITHDRAWAL_OTP',
-      'ZEPTOMAIL_TEMPLATE_TASK_CREATED',
-      'ZEPTOMAIL_TEMPLATE_TASK_APPLIED',
-      'ZEPTOMAIL_TEMPLATE_TASK_APPROVED',
-      'ZEPTOMAIL_TEMPLATE_TASK_DECLINED',
-      'ZEPTOMAIL_TEMPLATE_SUBMISSION_VERIFIED',
-      'ZEPTOMAIL_TEMPLATE_SUBMISSION_REJECTED',
-      'ZEPTOMAIL_TEMPLATE_PAYOUT_RECEIVED',
-      'ZEPTOMAIL_TEMPLATE_WITHDRAWAL_PROCESSED',
-      'ZEPTOMAIL_TEMPLATE_WITHDRAWAL_FAILED',
-      'ZEPTOMAIL_TEMPLATE_REFERRAL_REWARD',
-      'ZEPTOMAIL_TEMPLATE_PROFILE_INCOMPLETE',
-      'ZEPTOMAIL_TEMPLATE_NIN_VERIFICATION_REQUIRED',
-      'ZEPTOMAIL_TEMPLATE_SYSTEM_ALERT',
-    ];
-
-    templateKeys.forEach((key) => {
-      const templateId = this.configService.get<string>(key);
-      if (templateId) {
-        this.templateIds.set(key, templateId);
-      }
-    });
+  constructor(
+    private configService: ConfigService,
+    private mailerService: MailerService,
+  ) {
+    this.gmailUser = this.configService.get<string>('GMAIL_USER') || '';
   }
 
   async sendOTP(email: string, otp: string, userName?: string): Promise<void> {
-    const subject = 'Verify Your Leviate Account';
-    const templateId = this.templateIds.get('ZEPTOMAIL_TEMPLATE_OTP_VERIFICATION');
-    const htmlContent = this.getOTPEmailTemplate(otp, userName);
-
     await this.sendEmail({
-      to: [{ email_address: { address: email } }],
-      subject,
-      htmlbody: htmlContent,
-      templateId,
-      templateData: {
-        userName: userName || 'there',
-        otp,
-        expiresIn: '15 minutes',
-      },
+      to: email,
+      subject: 'Verify Your Leviate Account',
+      html: this.getOTPEmailTemplate(otp, userName),
     });
   }
 
   async sendPasswordReset(email: string, defaultPassword: string, userName?: string): Promise<void> {
-    const subject = 'Your Leviate Password Reset';
-    const templateId = this.templateIds.get('ZEPTOMAIL_TEMPLATE_PASSWORD_RESET');
-    const htmlContent = this.getPasswordResetEmailTemplate(defaultPassword, userName);
-
     await this.sendEmail({
-      to: [{ email_address: { address: email } }],
-      subject,
-      htmlbody: htmlContent,
-      templateId,
-      templateData: {
-        userName: userName || 'there',
-        temporaryPassword: defaultPassword,
-      },
+      to: email,
+      subject: 'Your Leviate Password Reset',
+      html: this.getPasswordResetEmailTemplate(defaultPassword, userName),
     });
   }
 
   async sendWelcomeEmail(email: string, userName?: string): Promise<void> {
-    const subject = 'Welcome to Leviate!';
-    const templateId = this.templateIds.get('ZEPTOMAIL_TEMPLATE_WELCOME');
-    const htmlContent = this.getWelcomeEmailTemplate(userName);
-
     await this.sendEmail({
-      to: [{ email_address: { address: email } }],
-      subject,
-      htmlbody: htmlContent,
-      templateId,
-      templateData: {
-        userName: userName || 'there',
-        reputationScore: '75',
-      },
+      to: email,
+      subject: 'Welcome to Leviate!',
+      html: this.getWelcomeEmailTemplate(userName),
     });
   }
 
   async sendWithdrawalOTP(email: string, otp: string, userName?: string, amount?: number): Promise<void> {
-    const subject = 'Withdrawal OTP - Leviate';
-    const templateId = this.templateIds.get('ZEPTOMAIL_TEMPLATE_WITHDRAWAL_OTP');
-    const htmlContent = this.getWithdrawalOTPEmailTemplate(otp, userName);
-
     await this.sendEmail({
-      to: [{ email_address: { address: email } }],
-      subject,
-      htmlbody: htmlContent,
-      templateId,
-      templateData: {
-        userName: userName || 'there',
-        otp,
-        expiresIn: '10 minutes',
-        amount: amount ? `₦${amount}` : undefined,
-      },
+      to: email,
+      subject: 'Withdrawal OTP - Leviate',
+      html: this.getWithdrawalOTPEmailTemplate(otp, userName, amount),
     });
   }
 
-  private async sendEmail(payload: {
-    to: Array<{ email_address: { address: string } }>;
-    subject: string;
-    htmlbody: string;
-    templateId?: string;
-    templateData?: Record<string, any>;
-  }): Promise<void> {
-    if (!this.zeptomailToken) {
-      this.logger.warn('ZEPTOMAIL_TOKEN not configured. Email not sent.');
-      this.logger.debug(`Would send email to: ${payload.to[0].email_address.address}`);
-      this.logger.debug(`Subject: ${payload.subject}`);
+  private async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
+    if (!this.gmailUser) {
+      this.logger.warn('GMAIL_USER not configured. Email not sent.');
+      this.logger.debug(`Would send email to: ${payload.to} | Subject: ${payload.subject}`);
       return;
     }
 
     try {
-      let zeptomailUrl: string;
-      let emailPayload: any;
-
-      // Use template-based email if template ID is provided
-      if (payload.templateId) {
-        zeptomailUrl = 'https://api.zeptomail.com/v1.1/email/template';
-        emailPayload = {
-          from: {
-            address: this.fromEmail,
-            name: this.fromName,
-          },
-          to: payload.to,
-          template_key: payload.templateId,
-          merge_info: payload.templateData || {},
-        };
-        // Only include bounce_address if it's set and verified in Zeptomail
-        if (this.bounceAddress) {
-          emailPayload.bounce_address = this.bounceAddress;
-        }
-        this.logger.debug(`Using Zeptomail template: ${payload.templateId}`);
-      } else {
-        // Fallback to inline HTML email
-        zeptomailUrl = 'https://api.zeptomail.com/v1.1/email';
-        emailPayload = {
-          from: {
-            address: this.fromEmail,
-            name: this.fromName,
-          },
-          to: payload.to,
-          subject: payload.subject,
-          htmlbody: payload.htmlbody,
-        };
-        // Only include bounce_address if it's set and verified in Zeptomail
-        if (this.bounceAddress) {
-          emailPayload.bounce_address = this.bounceAddress;
-        }
-        this.logger.debug('Using inline HTML email (no template ID provided)');
-      }
-
-      const response = await fetch(zeptomailUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Zoho-enczapikey ${this.zeptomailToken}`,
-        },
-        body: JSON.stringify(emailPayload),
+      await this.mailerService.sendMail({
+        to: payload.to,
+        subject: payload.subject,
+        html: payload.html,
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Zeptomail API error: ${response.status} - ${errorText}`);
-      }
-
-      this.logger.log(`Email sent successfully to: ${payload.to[0].email_address.address}`);
+      this.logger.log(`Email sent successfully to: ${payload.to}`);
     } catch (error) {
-      this.logger.error(`Failed to send email: ${error.message}`, error.stack);
+      const err = error as Error;
+      this.logger.error(`Failed to send email: ${err.message}`, err.stack);
       // Don't throw - allow app to continue even if email fails
     }
   }
@@ -219,11 +91,11 @@ export class EmailService {
     <div class="content">
       <p>Hi ${userName || 'there'},</p>
       <p>Thank you for registering with Leviate. Please verify your email address using the OTP code below:</p>
-      
+
       <div class="otp-box">
         <div class="otp-code">${otp}</div>
       </div>
-      
+
       <p>This code will expire in <strong>15 minutes</strong>.</p>
       <p>If you didn't create an account with Leviate, please ignore this email.</p>
     </div>
@@ -261,15 +133,15 @@ export class EmailService {
     <div class="content">
       <p>Hi ${userName || 'there'},</p>
       <p>Your password has been reset. Please use the temporary password below to log in:</p>
-      
+
       <div class="password-box">
         <div class="password">${password}</div>
       </div>
-      
+
       <div class="warning">
-        <strong>⚠️ Important:</strong> Please change your password immediately after logging in for security.
+        <strong>Important:</strong> Please change your password immediately after logging in for security.
       </div>
-      
+
       <p>If you didn't request this password reset, please contact support immediately.</p>
     </div>
     <div class="footer">
@@ -298,7 +170,7 @@ export class EmailService {
 <body>
   <div class="container">
     <div class="header">
-      <h1>Welcome to Leviate! 🎉</h1>
+      <h1>Welcome to Leviate!</h1>
     </div>
     <div class="content">
       <p>Hi ${userName || 'there'},</p>
@@ -315,7 +187,7 @@ export class EmailService {
     `;
   }
 
-  private getWithdrawalOTPEmailTemplate(otp: string, userName?: string): string {
+  private getWithdrawalOTPEmailTemplate(otp: string, userName?: string, amount?: number): string {
     return `
 <!DOCTYPE html>
 <html>
@@ -339,16 +211,16 @@ export class EmailService {
     </div>
     <div class="content">
       <p>Hi ${userName || 'there'},</p>
-      <p>You requested to withdraw funds from your Leviate wallet. Please use the OTP code below to complete your withdrawal:</p>
-      
+      <p>You requested to withdraw${amount ? ` <strong>&#8358;${amount}</strong>` : ' funds'} from your Leviate wallet. Please use the OTP code below to complete your withdrawal:</p>
+
       <div class="otp-box">
         <div class="otp-code">${otp}</div>
       </div>
-      
+
       <div class="warning">
-        <strong>⚠️ Security Notice:</strong> This OTP will expire in <strong>10 minutes</strong>. Do not share this code with anyone.
+        <strong>Security Notice:</strong> This OTP will expire in <strong>10 minutes</strong>. Do not share this code with anyone.
       </div>
-      
+
       <p>If you didn't request this withdrawal, please contact support immediately.</p>
     </div>
     <div class="footer">
@@ -360,4 +232,3 @@ export class EmailService {
     `;
   }
 }
-

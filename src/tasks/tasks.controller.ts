@@ -356,6 +356,20 @@ export class TasksController {
     return this.tasksService.endTask(user.id, id);
   }
 
+  @Post(':id/terminate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Terminate an active or paused campaign (creator only)',
+    description:
+      'Cancels the campaign, credits the creator with remaining unspent funds minus a configurable termination fee (default 10%), and raises an admin request to arrange the manual transfer.',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async terminateTask(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.tasksService.terminateTask(user.id, id);
+  }
+
   @Post(':id/dispute')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
