@@ -3,13 +3,14 @@ import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
 import { AIService } from '../common/services/ai.service';
 import { PaystackService } from '../common/services/paystack.service';
+import { EmailService } from '../common/services/email.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { ReputationModule } from '../reputation/reputation.module';
 import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   controllers: [TasksController],
-  providers: [TasksService, AIService, PaystackService],
+  providers: [TasksService, AIService, PaystackService, EmailService],
   imports: [ReputationModule, WalletModule],
   exports: [TasksService],
 })

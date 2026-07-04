@@ -23,9 +23,11 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
 import { CampaignDisputeQueryDto } from './dto/campaign-dispute-query.dto';
+import { CampaignTerminationQueryDto } from './dto/campaign-termination-query.dto';
 import { BaseResponseDto } from '../common/dto/base-response.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { ResolveCampaignDisputeDto } from './dto/resolve-campaign-dispute.dto';
+import { ProcessCampaignTerminationDto } from './dto/process-campaign-termination.dto';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('Admin')
@@ -148,6 +150,36 @@ export class AdminController {
       id,
       dto.status,
       dto.adminComment,
+    );
+  }
+
+  @Get('campaign-termination-requests')
+  @ApiOperation({
+    summary: 'List campaign cancellation refund requests (Admin only)',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async listCampaignTerminationRequests(
+    @Query() query: CampaignTerminationQueryDto,
+  ) {
+    return this.adminService.listCampaignTerminationRequests(query);
+  }
+
+  @Put('campaign-termination-requests/:id/process')
+  @ApiOperation({
+    summary:
+      'Mark a campaign cancellation refund as paid or cancelled (Admin only)',
+  })
+  @ApiResponse({ status: 200, type: BaseResponseDto })
+  async processCampaignTerminationRequest(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: ProcessCampaignTerminationDto,
+  ) {
+    return this.adminService.processCampaignTerminationRequest(
+      user.id,
+      id,
+      dto.status,
+      dto.adminNote,
     );
   }
 

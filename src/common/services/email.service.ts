@@ -46,6 +46,22 @@ export class EmailService {
     });
   }
 
+  async sendCampaignTerminationAdminAlert(
+    email: string,
+    details: {
+      campaignTitle: string;
+      netRefundAmount: number;
+      terminationFeeAmount: number;
+      terminationRequestId: string;
+    },
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Action Required: Campaign Cancellation Refund - Leviate',
+      html: this.getCampaignTerminationAdminAlertEmailTemplate(details),
+    });
+  }
+
   private async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
     if (!this.gmailUser) {
       this.logger.warn('GMAIL_USER not configured. Email not sent.');
@@ -222,6 +238,57 @@ export class EmailService {
       </div>
 
       <p>If you didn't request this withdrawal, please contact support immediately.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
+  }
+
+  private getCampaignTerminationAdminAlertEmailTemplate(details: {
+    campaignTitle: string;
+    netRefundAmount: number;
+    terminationFeeAmount: number;
+    terminationRequestId: string;
+  }): string {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+    .details-box { background: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 5px; }
+    .details-box p { margin: 6px 0; }
+    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
+    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Campaign Cancellation — Action Required</h1>
+    </div>
+    <div class="content">
+      <p>Hi,</p>
+      <p>A creator has cancelled their campaign and is owed a manual refund.</p>
+
+      <div class="details-box">
+        <p><strong>Campaign:</strong> ${details.campaignTitle}</p>
+        <p><strong>Termination request ID:</strong> ${details.terminationRequestId}</p>
+        <p><strong>Cancellation fee:</strong> &#8358;${details.terminationFeeAmount.toFixed(2)}</p>
+        <p><strong>Net refund owed:</strong> &#8358;${details.netRefundAmount.toFixed(2)}</p>
+      </div>
+
+      <div class="warning">
+        <strong>Please process this refund within 24 hours</strong> from the Admin dashboard once the transfer is arranged.
+      </div>
     </div>
     <div class="footer">
       <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>

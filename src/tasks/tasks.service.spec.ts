@@ -37,6 +37,7 @@ describe('TasksService Paystack payments', () => {
       paystackService,
       configService,
       {} as any,
+      {} as any,
     );
   });
 

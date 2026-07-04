@@ -11,6 +11,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { CampaignDisputeQueryDto } from './dto/campaign-dispute-query.dto';
+import { CampaignTerminationQueryDto } from './dto/campaign-termination-query.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
 import {
@@ -20,6 +21,8 @@ import {
   UserRole,
   UserType,
   DisputeStatus,
+  TerminationRequestStatus,
+  TransactionCategory,
 } from '@prisma/client';
 
 // Type guard to ensure SUPERADMIN is recognized
@@ -531,6 +534,123 @@ export class AdminService {
 
     return {
       message: 'Campaign dispute resolved successfully',
+      data: updated,
+    };
+  }
+
+  async listCampaignTerminationRequests(query: CampaignTerminationQueryDto) {
+    const { page = 1, limit = 20, status } = query;
+    const skip = (page - 1) * limit;
+    const where: any = {};
+    if (status) where.status = status;
+
+    const [requests, total] = await Promise.all([
+      this.prisma.campaignTerminationRequest.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          creator: {
+            select: {
+              id: true,
+              email: true,
+              profile: { select: { firstName: true, lastName: true } },
+            },
+          },
+          task: {
+            select: { id: true, title: true, status: true, budget: true },
+          },
+        },
+      }),
+      this.prisma.campaignTerminationRequest.count({ where }),
+    ]);
+
+    return {
+      message: 'Campaign termination requests retrieved successfully',
+      data: {
+        requests,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+    };
+  }
+
+  async processCampaignTerminationRequest(
+    adminId: string,
+    requestId: string,
+    status: 'PROCESSED' | 'CANCELLED',
+    adminNote?: string,
+  ) {
+    const request = await this.prisma.campaignTerminationRequest.findUnique({
+      where: { id: requestId },
+      include: { task: { select: { id: true, title: true } } },
+    });
+    if (!request) {
+      throw new NotFoundException('Campaign termination request not found');
+    }
+    if (request.status !== TerminationRequestStatus.PENDING) {
+      throw new BadRequestException(
+        'This termination request has already been processed',
+      );
+    }
+
+    const netRefundAmount = Number(request.netRefundAmount);
+
+    if (status === 'PROCESSED' && netRefundAmount > 0) {
+      await this.walletService.credit(
+        request.creatorId,
+        netRefundAmount,
+        TransactionCategory.REFUND,
+        `Campaign termination refund for: ${request.task.title}`,
+        { referenceId: request.taskId, taskId: request.taskId },
+      );
+    }
+
+    const updated = await this.prisma.campaignTerminationRequest.update({
+      where: { id: requestId },
+      data: {
+        status,
+        adminNote: adminNote || null,
+        processedAt: new Date(),
+      },
+    });
+
+    await this.prisma.adminAction.create({
+      data: {
+        adminId,
+        actionType: AdminActionType.PROCESS_CAMPAIGN_TERMINATION,
+        targetTaskId: request.taskId,
+        reason: `${status === 'PROCESSED' ? 'Processed' : 'Cancelled'} campaign termination request ${requestId}`,
+      },
+    });
+
+    await this.prisma.notification.create({
+      data: {
+        receiverId: request.creatorId,
+        type: 'SYSTEM_ALERT',
+        title:
+          status === 'PROCESSED'
+            ? 'Refund paid'
+            : 'Cancellation refund request cancelled',
+        message:
+          status === 'PROCESSED'
+            ? `Your refund of ₦${netRefundAmount.toFixed(2)} for campaign "${request.task.title}" has been paid.`
+            : `Your refund request for campaign "${request.task.title}" was not processed.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+        data: {
+          taskId: request.taskId,
+          terminationRequestId: request.id,
+          netRefundAmount,
+        },
+      },
+    });
+
+    return {
+      message: `Campaign termination request ${status === 'PROCESSED' ? 'processed' : 'cancelled'} successfully`,
       data: updated,
     };
   }

@@ -11,6 +11,7 @@ import { AIService } from '../common/services/ai.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { PaystackService } from '../common/services/paystack.service';
 import { WalletService } from '../wallet/wallet.service';
+import { EmailService } from '../common/services/email.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApplyTaskDto } from './dto/apply-task.dto';
@@ -75,6 +76,7 @@ export class TasksService {
     private paystackService: PaystackService,
     private configService: ConfigService,
     private walletService: WalletService,
+    private emailService: EmailService,
   ) {
     this.taskPricing = loadTaskPricingConfig((key) =>
       this.configService.get<string>(key),
@@ -1700,18 +1702,9 @@ export class TasksService {
     const terminationFeeAmount = grossRemainingAmount * (feePercentage / 100);
     const netRefundAmount = grossRemainingAmount - terminationFeeAmount;
 
-    // Credit creator with net refund (after termination fee deduction)
-    if (netRefundAmount > 0) {
-      await this.walletService.credit(
-        task.creatorId,
-        netRefundAmount,
-        TransactionCategory.REFUND,
-        `Campaign termination refund for: ${task.title} (${feePercentage}% fee applied)`,
-        { referenceId: task.id, taskId: task.id },
-      );
-    }
-
-    // Record the termination request for admin correspondence
+    // Refund is NOT credited yet — it's held pending manual admin processing
+    // (see AdminService.processCampaignTerminationRequest), which pays out
+    // the creator within 24 hours and only then credits the wallet.
     const terminationRequest =
       await this.prisma.campaignTerminationRequest.create({
         data: {
@@ -1729,7 +1722,7 @@ export class TasksService {
       data: { status: TaskStatus.TERMINATED },
     });
 
-    // Notify all admins to manually correspond with the creator about fund transfer
+    // Notify all admins (in-app + email) to manually process the refund
     const admins = await this.prisma.user.findMany({
       where: { role: { in: ['ADMIN', 'SUPERADMIN'] as any }, status: 'ACTIVE' as any },
     });
@@ -1739,8 +1732,8 @@ export class TasksService {
           data: {
             receiverId: admin.id,
             type: 'SYSTEM_ALERT',
-            title: 'Campaign Terminated — Action Required',
-            message: `Creator terminated campaign "${task.title}". Net refund: ₦${netRefundAmount.toFixed(2)} (fee: ₦${terminationFeeAmount.toFixed(2)}). Please contact the creator to arrange the fund transfer.`,
+            title: 'Campaign Cancelled — Refund Needs Processing',
+            message: `Creator cancelled campaign "${task.title}". Net refund owed: ₦${netRefundAmount.toFixed(2)} (fee: ₦${terminationFeeAmount.toFixed(2)}). Please process this within 24 hours.`,
             data: {
               taskId,
               terminationRequestId: terminationRequest.id,
@@ -1752,14 +1745,26 @@ export class TasksService {
         }),
       ),
     );
+    await Promise.all(
+      admins
+        .filter((admin) => admin.email)
+        .map((admin) =>
+          this.emailService.sendCampaignTerminationAdminAlert(admin.email, {
+            campaignTitle: task.title,
+            netRefundAmount,
+            terminationFeeAmount,
+            terminationRequestId: terminationRequest.id,
+          }),
+        ),
+    );
 
     // Notify creator
     await this.prisma.notification.create({
       data: {
         receiverId: userId,
         type: 'SYSTEM_ALERT',
-        title: 'Campaign terminated',
-        message: `Your campaign "${task.title}" has been terminated. A refund of ₦${netRefundAmount.toFixed(2)} is being processed (${feePercentage}% termination fee applied). Our team will be in touch to arrange the transfer.`,
+        title: 'Campaign cancelled — refund in progress',
+        message: `Your campaign "${task.title}" has been cancelled. A refund of ₦${netRefundAmount.toFixed(2)} (${feePercentage}% cancellation fee applied) is being processed by our team and will be paid to you within 24 hours.`,
         data: {
           taskId,
           terminationRequestId: terminationRequest.id,
@@ -1771,7 +1776,8 @@ export class TasksService {
     });
 
     return {
-      message: 'Campaign terminated successfully',
+      message:
+        'Campaign cancelled successfully. Your refund is pending admin processing and will be paid within 24 hours.',
       data: {
         task: terminatedTask,
         termination: {
@@ -1780,6 +1786,7 @@ export class TasksService {
           terminationFeeAmount,
           netRefundAmount,
           requestId: terminationRequest.id,
+          status: terminationRequest.status,
         },
       },
     };
