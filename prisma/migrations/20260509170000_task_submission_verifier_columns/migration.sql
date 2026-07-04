@@ -1,0 +1,5 @@
+-- No-op: the original content of this migration was never committed to
+-- version control, so it cannot be replayed here. The columns it was meant
+-- to add (verified_by_id, rejected_at) are re-created idempotently by the
+-- later 20260531150000_task_submission_admin_columns migration, and
+-- verification_status / verified_at already exist from the init migration.
