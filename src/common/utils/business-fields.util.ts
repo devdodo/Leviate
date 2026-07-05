@@ -14,11 +14,10 @@ export function resolveCreatorBusinessFields(
   userType: UserType,
   input: BusinessFieldsInput,
 ): { isBusiness: boolean; businessName: string | null } {
-  const hasBusinessPayload =
-    input.isBusiness !== undefined || input.businessName !== undefined;
-
+  // Non-creators may still send isBusiness: false (the default the frontend
+  // posts for contributors). Only reject an actual business claim.
   if (userType !== UserType.CREATOR) {
-    if (hasBusinessPayload) {
+    if (input.isBusiness === true || input.businessName?.trim()) {
       throw new BadRequestException(
         'businessName and isBusiness are only accepted for creator accounts',
       );
