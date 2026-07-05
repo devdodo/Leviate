@@ -14,7 +14,6 @@ import { RecentActivityQueryDto } from './dto/recent-activity-query.dto';
 import {
   ApplicationStatus,
   ReferralStatus,
-  UserType,
   VerificationStatus,
 } from '@prisma/client';
 import {
@@ -202,12 +201,8 @@ export class UsersService {
       onboardingDto.lastName,
     );
 
-    const businessFields = this.resolveCreatorBusinessFields(
-      user.userType,
-      onboardingDto,
-    );
-
-    // Create or update profile
+    // Create or update profile. isBusiness/businessName are set at signup
+    // and intentionally left untouched here.
     const profileData = {
       firstName: onboardingDto.firstName,
       lastName: onboardingDto.lastName,
@@ -217,7 +212,6 @@ export class UsersService {
       state: onboardingDto.state,
       city: onboardingDto.city,
       socialMediaHandles: onboardingDto.socialMediaHandles || {},
-      ...businessFields,
     };
 
     const now = new Date();
@@ -253,48 +247,8 @@ export class UsersService {
       message: 'Onboarding completed successfully',
       data: {
         profileComplete: true,
-        isBusiness: businessFields.isBusiness,
-        businessName: businessFields.businessName,
       },
     };
-  }
-
-  private resolveCreatorBusinessFields(
-    userType: UserType,
-    onboardingDto: OnboardingDto,
-  ): { isBusiness: boolean; businessName: string | null } {
-    const hasBusinessPayload =
-      onboardingDto.isBusiness !== undefined ||
-      onboardingDto.businessName !== undefined;
-
-    if (userType !== UserType.CREATOR) {
-      if (hasBusinessPayload) {
-        throw new BadRequestException(
-          'businessName and isBusiness are only accepted for creator accounts',
-        );
-      }
-      return { isBusiness: false, businessName: null };
-    }
-
-    const isBusiness = onboardingDto.isBusiness ?? false;
-
-    if (!isBusiness) {
-      if (onboardingDto.businessName?.trim()) {
-        throw new BadRequestException(
-          'businessName must not be provided when isBusiness is false',
-        );
-      }
-      return { isBusiness: false, businessName: null };
-    }
-
-    const businessName = onboardingDto.businessName?.trim();
-    if (!businessName) {
-      throw new BadRequestException(
-        'businessName is required when isBusiness is true',
-      );
-    }
-
-    return { isBusiness: true, businessName };
   }
 
   async verifyNIN(userId: string, verifyNinDto: VerifyNinDto) {

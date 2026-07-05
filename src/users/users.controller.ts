@@ -131,7 +131,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Complete onboarding process',
     description:
-      'Creators may pass isBusiness (boolean) and businessName (required when isBusiness is true) to distinguish businesses from individuals.',
+      'isBusiness/businessName are set at signup, not here — see POST /auth/signup.',
   })
   @ApiResponse({
     status: 200,

@@ -1,5 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength, IsIn, IsOptional } from 'class-validator';
+import {
+  IsEmail,
+  IsString,
+  MinLength,
+  IsIn,
+  IsOptional,
+  IsBoolean,
+  MaxLength,
+} from 'class-validator';
 import { UserType } from '@prisma/client';
 
 /** Public signup only — staff use admin seed / create-admin. */
@@ -38,5 +46,24 @@ export class SignupDto {
   @IsOptional()
   @IsString()
   referralCode?: string;
+
+  @ApiProperty({
+    required: false,
+    example: false,
+    description: 'Creators only. Set true when signing up as a business.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isBusiness?: boolean;
+
+  @ApiProperty({
+    required: false,
+    example: 'Acme Brands Ltd',
+    description: 'Creators only. Required when isBusiness is true.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  businessName?: string;
 }
 

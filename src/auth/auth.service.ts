@@ -12,6 +12,7 @@ import { PrismaService } from '../common/services/prisma.service';
 import { EmailService } from '../common/services/email.service';
 import { SignupDto } from './dto/signup.dto';
 import { allocateUniqueSocialVerificationCode } from '../common/utils/social-verification-code.util';
+import { resolveCreatorBusinessFields } from '../common/utils/business-fields.util';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
@@ -33,7 +34,13 @@ export class AuthService {
   ) {}
 
   async signup(signupDto: SignupDto) {
-    const { email, password, userType, referralCode } = signupDto;
+    const { email, password, userType, referralCode, isBusiness, businessName } =
+      signupDto;
+
+    const businessFields = resolveCreatorBusinessFields(userType, {
+      isBusiness,
+      businessName,
+    });
 
     // Check if user already exists
     const existingUser = await this.prisma.user.findUnique({
@@ -91,6 +98,16 @@ export class AuthService {
         email: true,
         userType: true,
         emailVerified: true,
+      },
+    });
+
+    // Stub profile so isBusiness/businessName exist from signup onward;
+    // onboarding later fills in the rest without touching these fields.
+    await this.prisma.userProfile.create({
+      data: {
+        userId: user.id,
+        isBusiness: businessFields.isBusiness,
+        businessName: businessFields.businessName,
       },
     });
 
