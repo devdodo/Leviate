@@ -181,10 +181,13 @@ export class CreateTaskDto {
   buzzwords?: string[];
 
   @ApiProperty({
-    example: 80000,
+    example: 25875,
     minimum: 5,
     description:
-      'Total campaign budget in Naira. Must equal (category rate + content type rate) × contributorCount from GET /tasks/task-types. Use POST /tasks/pricing/estimate to preview.',
+      'Total campaign budget in Naira, INCLUDING the processing charge. ' +
+      'unitRate = category rate (+ content type rate for MAKE_POST only); ' +
+      'budget = unitRate × contributorCount, plus the processing charge on top. ' +
+      'Use POST /tasks/pricing/estimate to get the exact figure — do not compute it client-side.',
   })
   @IsNumber()
   @Min(5)

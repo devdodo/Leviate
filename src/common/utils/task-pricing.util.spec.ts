@@ -1,6 +1,7 @@
 import {
   DEFAULT_CATEGORY_AMOUNTS,
   DEFAULT_CONTENT_TYPE_AMOUNTS,
+  DEFAULT_PROCESSING_FEE_PERCENTAGE,
   estimateTaskPricing,
   isBudgetAlignedWithPricing,
   loadTaskPricingConfig,
@@ -10,6 +11,7 @@ describe('task-pricing.util', () => {
   const config = {
     categories: { ...DEFAULT_CATEGORY_AMOUNTS },
     contentTypes: { ...DEFAULT_CONTENT_TYPE_AMOUNTS },
+    processingFeePercentage: DEFAULT_PROCESSING_FEE_PERCENTAGE,
   };
 
   it('loads overrides from env keys', () => {
@@ -20,29 +22,68 @@ describe('task-pricing.util', () => {
     expect(loaded.contentTypes.TEXT).toBe(DEFAULT_CONTENT_TYPE_AMOUNTS.TEXT);
   });
 
-  it('computes unit rate as category + content type amounts', () => {
-    const estimate = estimateTaskPricing(config, {
-      category: 'MAKE_POST',
-      contentType: 'VIDEO',
-      contributorCount: 5,
-    });
-    expect(estimate.categoryAmount).toBe(5000);
-    expect(estimate.contentTypeAmount).toBe(3000);
-    expect(estimate.unitRate).toBe(8000);
-    expect(estimate.contributorSlots).toBe(5);
-    expect(estimate.totalBudget).toBe(40000);
-    expect(estimate.grossPerContributor).toBe(8000);
+  it('loads the processing fee from env, defaulting to 3.5%', () => {
+    expect(loadTaskPricingConfig().processingFeePercentage).toBe(3.5);
+    expect(
+      loadTaskPricingConfig((key) =>
+        key === 'PROCESSING_FEE_PERCENTAGE' ? '2' : undefined,
+      ).processingFeePercentage,
+    ).toBe(2);
   });
 
-  it('derives contributor slots from budget when count omitted', () => {
+  describe('locked rates', () => {
+    const cases: Array<[string, string | undefined, number]> = [
+      ['MAKE_POST', 'TEXT', 250],
+      ['MAKE_POST', 'IMAGE', 750],
+      ['MAKE_POST', 'VIDEO', 3500],
+      ['LIKE_SHARE_SAVE_REPOST', 'TEXT', 200],
+      ['COMMENT_POST', 'TEXT', 150],
+      ['FOLLOW_ACCOUNT', 'TEXT', 450],
+    ];
+
+    it.each(cases)('prices %s / %s at %i per contributor', (category, contentType, expected) => {
+      const estimate = estimateTaskPricing(config, {
+        category,
+        contentType,
+        contributorCount: 1,
+      });
+      expect(estimate.unitRate).toBe(expected);
+    });
+  });
+
+  it('does not charge the content-type premium on engagement tasks', () => {
+    for (const category of ['LIKE_SHARE_SAVE_REPOST', 'COMMENT_POST', 'FOLLOW_ACCOUNT']) {
+      const text = estimateTaskPricing(config, { category, contentType: 'TEXT', contributorCount: 1 });
+      const video = estimateTaskPricing(config, { category, contentType: 'VIDEO', contributorCount: 1 });
+      expect(video.unitRate).toBe(text.unitRate);
+      expect(video.contentTypeAmount).toBe(0);
+    }
+  });
+
+  it('adds the processing charge on top of the payout pool', () => {
+    const estimate = estimateTaskPricing(config, {
+      category: 'MAKE_POST',
+      contentType: 'TEXT',
+      contributorCount: 100,
+    });
+    expect(estimate.payoutPool).toBe(25000);
+    expect(estimate.processingFee).toBe(875);
+    expect(estimate.totalBudget).toBe(25875);
+    // Contributors are unaffected by the processing charge.
+    expect(estimate.grossPerContributor).toBe(250);
+    expect(estimate.netPerContributor).toBe(237.5);
+  });
+
+  it('derives contributor slots from an all-in budget when count omitted', () => {
     const estimate = estimateTaskPricing(config, {
       category: 'COMMENT_POST',
       contentType: 'TEXT',
-      budget: 25000,
+      budget: 25875,
     });
-    expect(estimate.unitRate).toBe(2500);
-    expect(estimate.contributorSlots).toBe(10);
-    expect(estimate.totalBudget).toBe(25000);
+    expect(estimate.unitRate).toBe(150);
+    // 25,875 / (150 x 1.035) = 166.6 -> 166 slots
+    expect(estimate.contributorSlots).toBe(166);
+    expect(estimate.totalBudget).toBe(25771.5);
   });
 
   it('uses category amount only when content type omitted', () => {
@@ -50,7 +91,20 @@ describe('task-pricing.util', () => {
       category: 'FOLLOW_ACCOUNT',
       contributorCount: 3,
     });
-    expect(estimate.unitRate).toBe(1000);
-    expect(estimate.totalBudget).toBe(3000);
+    expect(estimate.unitRate).toBe(450);
+    expect(estimate.payoutPool).toBe(1350);
+    expect(estimate.totalBudget).toBe(1397.25);
+  });
+
+  it('accepts a budget within the rounding tolerance', () => {
+    const estimate = estimateTaskPricing(config, {
+      category: 'MAKE_POST',
+      contentType: 'VIDEO',
+      contributorCount: 10,
+    });
+    expect(estimate.totalBudget).toBe(36225);
+    expect(isBudgetAlignedWithPricing(36225, estimate)).toBe(true);
+    expect(isBudgetAlignedWithPricing(36224, estimate)).toBe(true);
+    expect(isBudgetAlignedWithPricing(35000, estimate)).toBe(false);
   });
 });

@@ -152,7 +152,10 @@ export class TasksService {
         scheduleTypes,
         pricing: {
           formula:
-            'unitRate = category.amount + contentType.amount (when selected); totalBudget = unitRate × contributorSlots',
+            'unitRate = category.amount + contentType.amount (MAKE_POST only; engagement tasks ignore content type). ' +
+            'payoutPool = unitRate × contributorSlots. totalBudget = payoutPool + processing charge.',
+          processingFeePercentage: this.taskPricing.processingFeePercentage,
+          contentTypePricedCategories: ['MAKE_POST'],
           currency: 'NGN',
         },
       },
@@ -183,7 +186,9 @@ export class TasksService {
 
     if (!isBudgetAlignedWithPricing(createTaskDto.budget, estimate)) {
       throw new BadRequestException(
-        `Budget must be ${estimate.totalBudget} NGN (${estimate.unitRate} per contributor × ${estimate.contributorSlots} contributors). ` +
+        `Budget must be ${estimate.totalBudget} NGN — ${estimate.unitRate} per contributor × ` +
+          `${estimate.contributorSlots} contributors = ${estimate.payoutPool}, plus ` +
+          `${estimate.processingFeePercentage}% charges (${estimate.processingFee}). ` +
           `Breakdown: category ${estimate.categoryAmount} + content type ${estimate.contentTypeAmount}.`,
       );
     }
@@ -1290,7 +1295,9 @@ export class TasksService {
 
       if (!isBudgetAlignedWithPricing(mergedBudget, estimate)) {
         throw new BadRequestException(
-          `Budget must be ${estimate.totalBudget} NGN (${estimate.unitRate} × ${estimate.contributorSlots} contributors).`,
+          `Budget must be ${estimate.totalBudget} NGN — ${estimate.unitRate} × ` +
+            `${estimate.contributorSlots} contributors = ${estimate.payoutPool}, plus ` +
+            `${estimate.processingFeePercentage}% charges (${estimate.processingFee}).`,
         );
       }
 

@@ -1,21 +1,38 @@
-/** Per-slot rates in Naira (category base + optional content-type premium). */
-
+/**
+ * Per-slot rates in Naira (category base + content-type premium).
+ *
+ * The content-type premium applies ONLY to MAKE_POST, where the contributor
+ * actually produces the media. Engagement tasks (like/comment/follow) cost the
+ * same whatever the target post contains, so they are flat.
+ *
+ * Locked rates, expressed as the totals a creator pays per contributor:
+ *   text post 250 | image post 750 | video post 3500
+ *   like/share/save/repost 200 | comment 150 | follow 450
+ */
 export const DEFAULT_CATEGORY_AMOUNTS: Record<string, number> = {
-  LIKE_SHARE_SAVE_REPOST: 1000,
-  COMMENT_POST: 2000,
-  MAKE_POST: 5000,
-  FOLLOW_ACCOUNT: 1000,
+  LIKE_SHARE_SAVE_REPOST: 200,
+  COMMENT_POST: 150,
+  MAKE_POST: 250,
+  FOLLOW_ACCOUNT: 450,
 };
 
+/** Premium added on top of MAKE_POST only. TEXT is the zero baseline. */
 export const DEFAULT_CONTENT_TYPE_AMOUNTS: Record<string, number> = {
-  VIDEO: 3000,
-  IMAGE: 1500,
-  TEXT: 500,
+  VIDEO: 3250,
+  IMAGE: 500,
+  TEXT: 0,
 };
+
+/** Categories where the contributor produces media, so content type affects price. */
+const CONTENT_PRICED_CATEGORIES = new Set(['MAKE_POST']);
+
+/** Payment-processing charge added on top of the contributor payout pool. */
+export const DEFAULT_PROCESSING_FEE_PERCENTAGE = 3.5;
 
 export type TaskPricingConfig = {
   categories: Record<string, number>;
   contentTypes: Record<string, number>;
+  processingFeePercentage: number;
 };
 
 export type TaskPricingEstimateInput = {
@@ -24,6 +41,7 @@ export type TaskPricingEstimateInput = {
   contributorCount?: number | null;
   budget?: number | null;
   platformFeePercentage?: number;
+  processingFeePercentage?: number;
 };
 
 export type TaskPricingEstimate = {
@@ -31,6 +49,12 @@ export type TaskPricingEstimate = {
   contentTypeAmount: number;
   unitRate: number;
   contributorSlots: number;
+  /** unitRate × contributorSlots — what contributors collectively gross. */
+  payoutPool: number;
+  processingFeePercentage: number;
+  /** Payment-processing charge added on top of the pool. */
+  processingFee: number;
+  /** What the creator funds: payoutPool + processingFee. */
   totalBudget: number;
   grossPerContributor: number;
   platformFeePercentage: number;
@@ -64,6 +88,11 @@ export function loadTaskPricingConfig(
     contentTypes[key] = parsePositiveAmount(getEnv(`TASK_CONTENT_TYPE_AMOUNT_${key}`), fallback);
   }
 
+  const processingFeePercentage = parsePositiveAmount(
+    getEnv('PROCESSING_FEE_PERCENTAGE'),
+    DEFAULT_PROCESSING_FEE_PERCENTAGE,
+  );
+
   const jsonOverride = getEnv('TASK_PRICING_JSON');
   if (jsonOverride?.trim()) {
     try {
@@ -79,7 +108,7 @@ export function loadTaskPricingConfig(
     }
   }
 
-  return { categories, contentTypes };
+  return { categories, contentTypes, processingFeePercentage };
 }
 
 export function getCategoryAmount(
@@ -99,24 +128,49 @@ export function getContentTypeAmount(
   return config.contentTypes[contentType] ?? 0;
 }
 
+/**
+ * The premium a given category actually charges for its content type. Zero for
+ * engagement tasks, so liking a video costs the same as liking a text post.
+ */
+export function getApplicableContentTypeAmount(
+  config: TaskPricingConfig,
+  category: string,
+  contentType?: string | null,
+): number {
+  if (!CONTENT_PRICED_CATEGORIES.has(category)) {
+    return 0;
+  }
+  return getContentTypeAmount(config, contentType);
+}
+
 export function getUnitRate(
   config: TaskPricingConfig,
   category: string,
   contentType?: string | null,
 ): number {
-  return getCategoryAmount(config, category) + getContentTypeAmount(config, contentType);
+  return (
+    getCategoryAmount(config, category) +
+    getApplicableContentTypeAmount(config, category, contentType)
+  );
 }
 
 /**
- * Total budget = unitRate × contributorSlots.
- * Slots from explicit count, or floor(budget / unitRate) when only budget is given.
+ * payoutPool  = unitRate × contributorSlots
+ * totalBudget = payoutPool + processing charge (what the creator funds)
+ *
+ * Slots come from an explicit count, or from floor(budget / all-in per slot)
+ * when only a budget is given.
  */
 export function estimateTaskPricing(
   config: TaskPricingConfig,
   input: TaskPricingEstimateInput,
 ): TaskPricingEstimate {
   const categoryAmount = getCategoryAmount(config, input.category);
-  const contentTypeAmount = getContentTypeAmount(config, input.contentType);
+  const contentTypeAmount = getApplicableContentTypeAmount(
+    config,
+    input.category,
+    input.contentType,
+  );
   const unitRate = categoryAmount + contentTypeAmount;
 
   if (unitRate <= 0) {
@@ -124,22 +178,34 @@ export function estimateTaskPricing(
   }
 
   const platformFeePercentage = Number(input.platformFeePercentage ?? 5);
+  const processingFeePercentage = Number(
+    input.processingFeePercentage ?? config.processingFeePercentage,
+  );
   const explicitSlots = parseContributorCount(input.contributorCount);
   const budget = input.budget != null ? Number(input.budget) : null;
+
+  // A budget-only estimate quotes an all-in figure, so back the processing
+  // charge out before deriving slots — otherwise it buys slots it can't fund.
+  const perSlotAllIn = unitRate * (1 + processingFeePercentage / 100);
 
   let contributorSlots: number;
   if (explicitSlots) {
     contributorSlots = explicitSlots;
   } else if (budget != null && budget > 0) {
-    contributorSlots = Math.max(1, Math.floor(budget / unitRate));
+    contributorSlots = Math.max(1, Math.floor(budget / perSlotAllIn));
   } else {
     contributorSlots = 1;
   }
 
-  const totalBudget = unitRate * contributorSlots;
+  const payoutPool = unitRate * contributorSlots;
+  const processingFee = (payoutPool * processingFeePercentage) / 100;
+  const totalBudget = payoutPool + processingFee;
+
   const grossPerContributor = unitRate;
-  const platformFee = (totalBudget * platformFeePercentage) / 100;
-  const netBudget = totalBudget - platformFee;
+  // The platform fee is charged on contributor earnings, not on the
+  // processing charge, so it is calculated from the pool.
+  const platformFee = (payoutPool * platformFeePercentage) / 100;
+  const netBudget = payoutPool - platformFee;
   const netPerContributor = (grossPerContributor * (100 - platformFeePercentage)) / 100;
 
   return {
@@ -147,7 +213,10 @@ export function estimateTaskPricing(
     contentTypeAmount,
     unitRate,
     contributorSlots,
-    totalBudget,
+    payoutPool,
+    processingFeePercentage,
+    processingFee: Math.round(processingFee * 100) / 100,
+    totalBudget: Math.round(totalBudget * 100) / 100,
     grossPerContributor,
     platformFeePercentage,
     platformFee: Math.round(platformFee * 100) / 100,
