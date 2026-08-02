@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
-import { MailerModule } from '@nestjs-modules/mailer';
 import { ConfigModule } from './config/config.module';
 import { AuthModule } from './auth/auth.module';
 import { ReputationModule } from './reputation/reputation.module';
@@ -20,7 +19,7 @@ import { UtilitiesModule } from './utilities/utilities.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { PrismaModule } from './common/prisma.module';
-import { EmailService } from './common/services/email.service';
+import { EmailModule } from './common/email.module';
 import { PaystackService } from './common/services/paystack.service';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AppController } from './app.controller';
@@ -40,39 +39,6 @@ import { AppService } from './app.service';
       ],
       inject: [ConfigService],
     }),
-    MailerModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const port = parseInt(
-          configService.get<string>('SMTP_PORT', '465'),
-          10,
-        );
-        // secure=true for implicit TLS (465); false for STARTTLS (587).
-        const secure =
-          configService.get<string>('SMTP_SECURE', 'true') === 'true';
-        const user = configService.get<string>('SMTP_USER');
-        const fromEmail = configService.get<string>('FROM_EMAIL') || user;
-        const fromName = configService.get<string>('FROM_NAME') || 'Leviate';
-        return {
-          transport: {
-            host: configService.get<string>(
-              'SMTP_HOST',
-              'mail.privateemail.com',
-            ),
-            port,
-            secure,
-            auth: {
-              user,
-              pass: configService.get<string>('SMTP_PASSWORD'),
-            },
-          },
-          defaults: {
-            from: `"${fromName}" <${fromEmail}>`,
-          },
-        };
-      },
-      inject: [ConfigService],
-    }),
     AuthModule,
     ReputationModule,
     RecommendationsModule,
@@ -88,11 +54,11 @@ import { AppService } from './app.service';
     UtilitiesModule,
     UploadsModule,
     AnalyticsModule,
+    EmailModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    EmailService,
     PaystackService,
     {
       provide: APP_GUARD,

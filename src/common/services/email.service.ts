@@ -1,18 +1,106 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MailerService } from '@nestjs-modules/mailer';
+import { Resend } from 'resend';
 import * as templates from '../emails/email-templates';
 
-@Injectable()
-export class EmailService {
-  private readonly logger = new Logger(EmailService.name);
-  private readonly smtpUser: string;
+/** Resend's shared sandbox sender, usable before a domain is verified. */
+const RESEND_SANDBOX_FROM = 'onboarding@resend.dev';
 
-  constructor(
-    private configService: ConfigService,
-    private mailerService: MailerService,
-  ) {
-    this.smtpUser = this.configService.get<string>('SMTP_USER') || '';
+@Injectable()
+export class EmailService implements OnModuleInit {
+  private readonly logger = new Logger(EmailService.name);
+  private readonly resend: Resend | null;
+  private readonly from: string;
+  private readonly replyTo?: string;
+  private readonly enabled: boolean;
+
+  constructor(private configService: ConfigService) {
+    const apiKey = this.configService.get<string>('RESEND_API_KEY') || '';
+    this.resend = apiKey ? new Resend(apiKey) : null;
+
+    const fromName = this.configService.get<string>('FROM_NAME') || 'Leviate';
+    const fromEmail =
+      this.configService.get<string>('FROM_EMAIL') || RESEND_SANDBOX_FROM;
+    this.from = `${fromName} <${fromEmail}>`;
+    this.replyTo = this.configService.get<string>('REPLY_TO_EMAIL') || undefined;
+
+    // Explicit off-switch for local/CI runs; defaults to on when unset.
+    this.enabled =
+      (this.configService.get<string>('NOTIFICATION_EMAIL_ENABLED') || 'true')
+        .trim()
+        .toLowerCase() !== 'false';
+  }
+
+  /**
+   * Report the effective configuration at boot, and confirm the API key works,
+   * so a bad key or an unverified sending domain is visible in the startup log
+   * rather than only when the first email is attempted.
+   *
+   * Deliberately not awaited: a broken email path must not delay app startup.
+   */
+  onModuleInit(): void {
+    if (!this.enabled) {
+      this.logger.warn(
+        'NOTIFICATION_EMAIL_ENABLED=false — email sending is disabled.',
+      );
+      return;
+    }
+    if (!this.resend) {
+      this.logger.warn('RESEND_API_KEY not configured. Email not sent.');
+      return;
+    }
+
+    this.logger.log(`Email provider: Resend | from: ${this.from}`);
+    void this.verifyConfiguration();
+  }
+
+  /**
+   * Lists the account's domains to prove the key is valid and to surface the
+   * verification status of the sending domain. A send-only key cannot read
+   * domains, which is not an error — it just can't be checked this way.
+   */
+  private async verifyConfiguration(): Promise<void> {
+    if (!this.resend) return;
+
+    try {
+      const { data, error } = await this.resend.domains.list();
+
+      if (error) {
+        this.logger.warn(
+          `Could not verify Resend configuration: ${error.message}. ` +
+            `This is expected for a send-only API key; a 401/invalid_api_key means the key is wrong.`,
+        );
+        return;
+      }
+
+      const domains = data?.data ?? [];
+      const sendingDomain = this.from.split('@').pop()?.replace('>', '').trim();
+      const match = domains.find((d) => d.name === sendingDomain);
+
+      if (sendingDomain === 'resend.dev') {
+        this.logger.warn(
+          `Sending from Resend's sandbox address (${RESEND_SANDBOX_FROM}). ` +
+            `It only delivers to your own Resend account address — set FROM_EMAIL to a verified domain for real sends.`,
+        );
+      } else if (!match) {
+        this.logger.error(
+          `Domain "${sendingDomain}" is not registered in Resend. Add it under Domains, ` +
+            `publish the DNS records it gives you, then set FROM_EMAIL to an address on that domain.`,
+        );
+      } else if (match.status !== 'verified') {
+        this.logger.error(
+          `Domain "${sendingDomain}" is registered but its status is "${match.status}". ` +
+            `Sends will be rejected until the DNS records are published and it verifies.`,
+        );
+      } else {
+        this.logger.log(
+          `Resend verified — domain "${sendingDomain}" is ready to send.`,
+        );
+      }
+    } catch (error) {
+      const err = error as Error;
+      this.logger.warn(`Resend verification check failed: ${err.message}`);
+    }
   }
 
   /* -------------------------------------------------------------- */
@@ -304,19 +392,34 @@ export class EmailService {
   /* -------------------------------------------------------------- */
 
   private async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
-    if (!this.smtpUser) {
-      this.logger.warn('SMTP_USER not configured. Email not sent.');
+    if (!this.enabled || !this.resend) {
+      this.logger.warn(
+        this.enabled
+          ? 'RESEND_API_KEY not configured. Email not sent.'
+          : 'Email sending is disabled. Email not sent.',
+      );
       this.logger.debug(`Would send email to: ${payload.to} | Subject: ${payload.subject}`);
       return;
     }
 
     try {
-      await this.mailerService.sendMail({
-        to: payload.to,
+      // Resend reports failures in the `error` field rather than throwing.
+      const { data, error } = await this.resend.emails.send({
+        from: this.from,
+        to: [payload.to],
         subject: payload.subject,
         html: payload.html,
+        ...(this.replyTo ? { replyTo: this.replyTo } : {}),
       });
-      this.logger.log(`Email sent successfully to: ${payload.to}`);
+
+      if (error) {
+        this.logger.error(
+          `Failed to send email to ${payload.to}: ${error.name} — ${error.message}`,
+        );
+        return;
+      }
+
+      this.logger.log(`Email sent successfully to: ${payload.to} (id: ${data?.id})`);
     } catch (error) {
       const err = error as Error;
       this.logger.error(`Failed to send email: ${err.message}`, err.stack);
