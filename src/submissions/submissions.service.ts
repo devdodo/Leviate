@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { AIService } from '../common/services/ai.service';
+import { EmailService } from '../common/services/email.service';
 import { WalletService } from '../wallet/wallet.service';
 import {
   contributorNetPayoutAmount,
@@ -32,7 +33,28 @@ export class SubmissionsService {
     private aiService: AIService,
     private walletService: WalletService,
     private reputationService: ReputationService,
+    private emailService: EmailService,
   ) {}
+
+  /**
+   * Best-effort email notification: never let a mail failure break the flow.
+   */
+  private async emailUser(
+    userId: string,
+    send: (email: string) => Promise<void>,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+      if (user?.email) {
+        await send(user.email);
+      }
+    } catch {
+      // Email is non-critical; swallow errors.
+    }
+  }
 
   private submissionProofSummary(submission: {
     proofs: unknown;
@@ -427,6 +449,13 @@ export class SubmissionsService {
       },
     });
 
+    await this.emailUser(updated.taskerId, (email) =>
+      this.emailService.sendSubmissionVerified(email, {
+        campaignTitle: updated.task.title,
+        payout: payoutAmount,
+      }),
+    );
+
     return {
       message: 'Submission approved and contributor credited successfully',
       data: {
@@ -496,6 +525,14 @@ export class SubmissionsService {
         data: { taskId: submission.taskId, submissionId: id },
       },
     });
+
+    await this.emailUser(submission.taskerId, (email) =>
+      this.emailService.sendSubmissionRejected(email, {
+        campaignTitle: submission.task.title,
+        reason: comment,
+        canResubmit: true,
+      }),
+    );
 
     return {
       message: 'Submission rejected successfully',
@@ -620,6 +657,14 @@ export class SubmissionsService {
             },
           },
         });
+
+        await this.emailUser(submission.taskerId, (email) =>
+          this.emailService.sendSubmissionRejected(email, {
+            campaignTitle: submission.task.title,
+            reason: verificationResult.reason,
+            canResubmit: true,
+          }),
+        );
       }
     } catch (error) {
       // Log error and mark as pending for manual review
@@ -706,6 +751,13 @@ export class SubmissionsService {
         },
       },
     });
+
+    await this.emailUser(submission.taskerId, (email) =>
+      this.emailService.sendPayoutReceived(email, {
+        amount: taskerAmount,
+        campaignTitle: task.title,
+      }),
+    );
 
     return taskerAmount;
   }

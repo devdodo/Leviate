@@ -6,6 +6,7 @@ import { AdminSocialVerificationsController } from './admin-social-verifications
 import { SubmissionsModule } from '../submissions/submissions.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { EmailService } from '../common/services/email.service';
 
 @Module({
   imports: [SubmissionsModule, UsersModule, WalletModule],
@@ -14,7 +15,7 @@ import { WalletModule } from '../wallet/wallet.module';
     AdminSubmissionsController,
     AdminSocialVerificationsController,
   ],
-  providers: [AdminService],
+  providers: [AdminService, EmailService],
   exports: [AdminService],
 })
 export class AdminModule {}

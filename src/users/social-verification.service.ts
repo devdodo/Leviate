@@ -11,6 +11,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../common/services/prisma.service';
+import { EmailService } from '../common/services/email.service';
 import {
   SOCIAL_PLATFORMS,
   normalizeSocialPlatform,
@@ -29,6 +30,7 @@ export class SocialVerificationService {
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
+    private emailService: EmailService,
   ) {}
 
   private getVerificationContact(): { platform: string; handle: string } {
@@ -507,6 +509,10 @@ export class SocialVerificationService {
       },
     });
 
+    await this.emailUserById(row.userId, (email) =>
+      this.emailService.sendSocialVerified(email, { platform: row.platform }),
+    );
+
     return {
       message: 'Social profile verified successfully',
       data: updated,
@@ -546,10 +552,37 @@ export class SocialVerificationService {
       },
     });
 
+    await this.emailUserById(row.userId, (email) =>
+      this.emailService.sendSocialRejected(email, {
+        platform: row.platform,
+        reason: comment,
+      }),
+    );
+
     return {
       message: 'Social verification rejected',
       data: updated,
     };
+  }
+
+  /**
+   * Best-effort email helper: resolves the user's email and sends, never throws.
+   */
+  private async emailUserById(
+    userId: string,
+    send: (email: string) => Promise<void>,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+      if (user?.email) {
+        await send(user.email);
+      }
+    } catch {
+      // Email is non-critical.
+    }
   }
 
   private async getPendingOrThrow(id: string) {

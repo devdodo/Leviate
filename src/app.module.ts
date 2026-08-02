@@ -42,20 +42,35 @@ import { AppService } from './app.service';
     }),
     MailerModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        transport: {
-          host: 'smtp.gmail.com',
-          port: 465,
-          secure: true,
-          auth: {
-            user: configService.get<string>('GMAIL_USER'),
-            pass: configService.get<string>('GMAIL_APP_PASSWORD'),
+      useFactory: (configService: ConfigService) => {
+        const port = parseInt(
+          configService.get<string>('SMTP_PORT', '465'),
+          10,
+        );
+        // secure=true for implicit TLS (465); false for STARTTLS (587).
+        const secure =
+          configService.get<string>('SMTP_SECURE', 'true') === 'true';
+        const user = configService.get<string>('SMTP_USER');
+        const fromEmail = configService.get<string>('FROM_EMAIL') || user;
+        const fromName = configService.get<string>('FROM_NAME') || 'Leviate';
+        return {
+          transport: {
+            host: configService.get<string>(
+              'SMTP_HOST',
+              'mail.privateemail.com',
+            ),
+            port,
+            secure,
+            auth: {
+              user,
+              pass: configService.get<string>('SMTP_PASSWORD'),
+            },
           },
-        },
-        defaults: {
-          from: `"${configService.get<string>('FROM_NAME') || 'Leviate'}" <${configService.get<string>('FROM_EMAIL') || configService.get<string>('GMAIL_USER')}>`,
-        },
-      }),
+          defaults: {
+            from: `"${fromName}" <${fromEmail}>`,
+          },
+        };
+      },
       inject: [ConfigService],
     }),
     AuthModule,

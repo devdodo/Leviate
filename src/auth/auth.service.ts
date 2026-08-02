@@ -347,6 +347,13 @@ export class AuthService {
       },
     });
 
+    // Confirm the change by email (best-effort).
+    try {
+      await this.emailService.sendPasswordChanged(user.email);
+    } catch (error) {
+      this.logger.warn(`Password-changed email failed: ${error.message}`);
+    }
+
     return {
       message: 'Password changed successfully',
     };
@@ -381,7 +388,7 @@ export class AuthService {
       },
     });
 
-    // Send default password via Zeptomail
+    // Send default password via email
     await this.emailService.sendPasswordReset(email, defaultPassword);
 
     return {

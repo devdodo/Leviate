@@ -459,6 +459,23 @@ export class BanksService {
       },
     });
 
+    // Email the user once the transfer is confirmed successful (best-effort).
+    // Pending transfers settle asynchronously and are not emailed here.
+    if (transferResponse.data.status === 'success') {
+      try {
+        await this.emailService.sendWithdrawalProcessed(user.email, {
+          amount: withdrawAmountNumber,
+          bankName: bankAccount.bankName,
+          accountLast4: String(bankAccount.accountNumber || '').slice(-4),
+          reference: transferResponse.data.transfer_code,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Withdrawal email failed for ${user.email}: ${error.message}`,
+        );
+      }
+    }
+
     const paystackMocked = this.paystackService.isMockTransfersEnabled();
 
     return {

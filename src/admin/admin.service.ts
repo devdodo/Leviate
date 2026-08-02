@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
+import { EmailService } from '../common/services/email.service';
 import { TransactionQueryDto } from '../wallet/dto/transaction-query.dto';
 import { AdminUserQueryDto, AdminTaskQueryDto } from './dto/admin-query.dto';
 import { CampaignDisputeQueryDto } from './dto/campaign-dispute-query.dto';
@@ -36,6 +37,7 @@ export class AdminService {
   constructor(
     private prisma: PrismaService,
     private walletService: WalletService,
+    private emailService: EmailService,
   ) {}
 
   async getUsers(query: AdminUserQueryDto) {
@@ -175,6 +177,14 @@ export class AdminService {
       },
     });
 
+    if (user.email) {
+      try {
+        await this.emailService.sendAccountSuspended(user.email, reason);
+      } catch (error) {
+        this.logger.warn(`Suspension email failed for ${user.email}: ${error.message}`);
+      }
+    }
+
     return {
       message: 'User suspended successfully',
       data: { userId, status: UserStatus.SUSPENDED },
@@ -202,6 +212,14 @@ export class AdminService {
         targetUserId: userId,
       },
     });
+
+    if (user.email) {
+      try {
+        await this.emailService.sendAccountReactivated(user.email);
+      } catch (error) {
+        this.logger.warn(`Reactivation email failed for ${user.email}: ${error.message}`);
+      }
+    }
 
     return {
       message: 'User unsuspended successfully',
@@ -648,6 +666,28 @@ export class AdminService {
         },
       },
     });
+
+    // Email the creator about the refund outcome (best-effort).
+    try {
+      const creator = await this.prisma.user.findUnique({
+        where: { id: request.creatorId },
+        select: { email: true },
+      });
+      if (creator?.email) {
+        await this.emailService.sendSystemAlert(creator.email, {
+          heading:
+            status === 'PROCESSED'
+              ? 'Refund paid'
+              : 'Cancellation refund not processed',
+          message:
+            status === 'PROCESSED'
+              ? `Your refund of ₦${netRefundAmount.toFixed(2)} for campaign "${request.task.title}" has been paid to your wallet.`
+              : `Your refund request for campaign "${request.task.title}" was not processed.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Termination refund email failed: ${error.message}`);
+    }
 
     return {
       message: `Campaign termination request ${status === 'PROCESSED' ? 'processed' : 'cancelled'} successfully`,

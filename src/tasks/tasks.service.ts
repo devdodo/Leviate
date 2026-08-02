@@ -1441,6 +1441,29 @@ export class TasksService {
       },
     });
 
+    // Email notifications (best-effort — never block the application flow).
+    try {
+      const creator = await this.prisma.user.findUnique({
+        where: { id: task.creatorId },
+        select: { email: true },
+      });
+      if (creator?.email) {
+        await this.emailService.sendNewApplicationReceived(creator.email, {
+          campaignTitle: task.title,
+          applicantName: user.email,
+        });
+      }
+
+      // If the applicant was auto-approved, let them know immediately.
+      if (status === ApplicationStatus.APPROVED) {
+        await this.emailService.sendApplicationApproved(user.email, {
+          campaignTitle: task.title,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Application email failed: ${error.message}`);
+    }
+
     return {
       message: meetsMinimum
         ? 'Application submitted and auto-approved'

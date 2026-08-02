@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
+import { EmailService } from '../common/services/email.service';
 import { ReferralStatus, TransactionCategory, TransactionType, TransactionStatus } from '@prisma/client';
 import { WithdrawDto } from '../wallet/dto/withdraw.dto';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -14,6 +15,7 @@ export class ReferralsService {
   constructor(
     private prisma: PrismaService,
     private walletService: WalletService,
+    private emailService: EmailService,
   ) {}
 
   async getReferralCode(userId: string) {
@@ -203,6 +205,18 @@ export class ReferralsService {
         },
       },
     });
+
+    // Email the referrer about their reward (best-effort).
+    if (user.referredBy?.email) {
+      try {
+        await this.emailService.sendReferralReward(user.referredBy.email, {
+          amount: rewardAmount,
+          referredName: user.email,
+        });
+      } catch {
+        // Email is non-critical.
+      }
+    }
   }
 
   /**
@@ -270,6 +284,16 @@ export class ReferralsService {
         },
       },
     });
+
+    // Confirm the referral-earnings withdrawal by email (best-effort).
+    try {
+      await this.emailService.sendWithdrawalProcessed(user.email, {
+        amount: Number(withdrawDto.amount),
+        reference: withdrawalTx.id,
+      });
+    } catch {
+      // Email is non-critical.
+    }
 
     return {
       message: 'Withdrawal from referral earnings processed successfully',

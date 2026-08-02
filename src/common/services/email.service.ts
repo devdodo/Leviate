@@ -1,32 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MailerService } from '@nestjs-modules/mailer';
+import * as templates from '../emails/email-templates';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private readonly gmailUser: string;
+  private readonly smtpUser: string;
 
   constructor(
     private configService: ConfigService,
     private mailerService: MailerService,
   ) {
-    this.gmailUser = this.configService.get<string>('GMAIL_USER') || '';
+    this.smtpUser = this.configService.get<string>('SMTP_USER') || '';
   }
+
+  /* -------------------------------------------------------------- */
+  /* Account & auth                                                 */
+  /* -------------------------------------------------------------- */
 
   async sendOTP(email: string, otp: string, userName?: string): Promise<void> {
     await this.sendEmail({
       to: email,
       subject: 'Verify Your Leviate Account',
-      html: this.getOTPEmailTemplate(otp, userName),
-    });
-  }
-
-  async sendPasswordReset(email: string, defaultPassword: string, userName?: string): Promise<void> {
-    await this.sendEmail({
-      to: email,
-      subject: 'Your Leviate Password Reset',
-      html: this.getPasswordResetEmailTemplate(defaultPassword, userName),
+      html: templates.emailVerificationOtp(otp, userName),
     });
   }
 
@@ -34,17 +31,245 @@ export class EmailService {
     await this.sendEmail({
       to: email,
       subject: 'Welcome to Leviate!',
-      html: this.getWelcomeEmailTemplate(userName),
+      html: templates.welcome(userName),
     });
   }
+
+  async sendPasswordReset(email: string, defaultPassword: string, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Leviate Password Reset',
+      html: templates.passwordReset(defaultPassword, userName),
+    });
+  }
+
+  async sendPasswordChanged(email: string, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Leviate Password Was Changed',
+      html: templates.passwordChanged(userName),
+    });
+  }
+
+  async sendAccountSuspended(email: string, reason?: string, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Leviate Account Has Been Suspended',
+      html: templates.accountSuspended(reason, userName),
+    });
+  }
+
+  async sendAccountReactivated(email: string, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Leviate Account Has Been Reactivated',
+      html: templates.accountReactivated(userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Wallet & payments                                              */
+  /* -------------------------------------------------------------- */
 
   async sendWithdrawalOTP(email: string, otp: string, userName?: string, amount?: number): Promise<void> {
     await this.sendEmail({
       to: email,
       subject: 'Withdrawal OTP - Leviate',
-      html: this.getWithdrawalOTPEmailTemplate(otp, userName, amount),
+      html: templates.withdrawalOtp(otp, userName, amount),
     });
   }
+
+  async sendWithdrawalProcessed(
+    email: string,
+    details: { amount: number; bankName?: string; accountLast4?: string; reference?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Withdrawal Successful - Leviate',
+      html: templates.withdrawalProcessed(details, userName),
+    });
+  }
+
+  async sendWithdrawalFailed(
+    email: string,
+    details: { amount: number; reason?: string; reference?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Withdrawal Failed - Leviate',
+      html: templates.withdrawalFailed(details, userName),
+    });
+  }
+
+  async sendPayoutReceived(
+    email: string,
+    details: { amount: number; campaignTitle?: string; newBalance?: number },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: "You've Been Paid - Leviate",
+      html: templates.payoutReceived(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Campaigns / tasks — creator side                               */
+  /* -------------------------------------------------------------- */
+
+  async sendNewApplicationReceived(
+    email: string,
+    details: { campaignTitle: string; applicantName?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'New Application Received - Leviate',
+      html: templates.newApplicationReceived(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Campaigns / tasks — contributor side                           */
+  /* -------------------------------------------------------------- */
+
+  async sendApplicationApproved(
+    email: string,
+    details: { campaignTitle: string; payout?: number },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Application Was Approved - Leviate',
+      html: templates.applicationApproved(details, userName),
+    });
+  }
+
+  async sendApplicationDeclined(
+    email: string,
+    details: { campaignTitle: string; reason?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Update on Your Application - Leviate',
+      html: templates.applicationDeclined(details, userName),
+    });
+  }
+
+  async sendSubmissionVerified(
+    email: string,
+    details: { campaignTitle: string; payout?: number },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Submission Was Approved - Leviate',
+      html: templates.submissionVerified(details, userName),
+    });
+  }
+
+  async sendSubmissionRejected(
+    email: string,
+    details: { campaignTitle: string; reason?: string; canResubmit?: boolean },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Submission Needs Attention - Leviate',
+      html: templates.submissionRejected(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Referrals                                                      */
+  /* -------------------------------------------------------------- */
+
+  async sendReferralReward(
+    email: string,
+    details: { amount: number; referredName?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: "You've Earned a Referral Reward - Leviate",
+      html: templates.referralReward(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Verification & profile                                         */
+  /* -------------------------------------------------------------- */
+
+  async sendNinVerificationRequired(email: string, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Verify Your Identity - Leviate',
+      html: templates.ninVerificationRequired(userName),
+    });
+  }
+
+  async sendProfileIncomplete(email: string, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Complete Your Profile - Leviate',
+      html: templates.profileIncomplete(userName),
+    });
+  }
+
+  async sendSocialVerified(email: string, details: { platform?: string }, userName?: string): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Social Account Verified - Leviate',
+      html: templates.socialVerified(details, userName),
+    });
+  }
+
+  async sendSocialRejected(
+    email: string,
+    details: { platform?: string; reason?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Social Verification Update - Leviate',
+      html: templates.socialRejected(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Disputes                                                       */
+  /* -------------------------------------------------------------- */
+
+  async sendDisputeOpened(
+    email: string,
+    details: { disputeId: string; campaignTitle?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'We Received Your Dispute - Leviate',
+      html: templates.disputeOpened(details, userName),
+    });
+  }
+
+  async sendDisputeResolved(
+    email: string,
+    details: { disputeId: string; outcome?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: 'Your Dispute Has Been Resolved - Leviate',
+      html: templates.disputeResolved(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Admin & system                                                 */
+  /* -------------------------------------------------------------- */
 
   async sendCampaignTerminationAdminAlert(
     email: string,
@@ -58,13 +283,29 @@ export class EmailService {
     await this.sendEmail({
       to: email,
       subject: 'Action Required: Campaign Cancellation Refund - Leviate',
-      html: this.getCampaignTerminationAdminAlertEmailTemplate(details),
+      html: templates.campaignTerminationAdminAlert(details),
     });
   }
 
+  async sendSystemAlert(
+    email: string,
+    details: { heading: string; message: string; ctaText?: string; ctaUrl?: string },
+    userName?: string,
+  ): Promise<void> {
+    await this.sendEmail({
+      to: email,
+      subject: `${details.heading} - Leviate`,
+      html: templates.systemAlert(details, userName),
+    });
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Delivery                                                       */
+  /* -------------------------------------------------------------- */
+
   private async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
-    if (!this.gmailUser) {
-      this.logger.warn('GMAIL_USER not configured. Email not sent.');
+    if (!this.smtpUser) {
+      this.logger.warn('SMTP_USER not configured. Email not sent.');
       this.logger.debug(`Would send email to: ${payload.to} | Subject: ${payload.subject}`);
       return;
     }
@@ -81,221 +322,5 @@ export class EmailService {
       this.logger.error(`Failed to send email: ${err.message}`, err.stack);
       // Don't throw - allow app to continue even if email fails
     }
-  }
-
-  private getOTPEmailTemplate(otp: string, userName?: string): string {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-    .otp-box { background: white; border: 2px dashed #667eea; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px; }
-    .otp-code { font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px; }
-    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Welcome to Leviate!</h1>
-    </div>
-    <div class="content">
-      <p>Hi ${userName || 'there'},</p>
-      <p>Thank you for registering with Leviate. Please verify your email address using the OTP code below:</p>
-
-      <div class="otp-box">
-        <div class="otp-code">${otp}</div>
-      </div>
-
-      <p>This code will expire in <strong>15 minutes</strong>.</p>
-      <p>If you didn't create an account with Leviate, please ignore this email.</p>
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-    `;
-  }
-
-  private getPasswordResetEmailTemplate(password: string, userName?: string): string {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-    .password-box { background: white; border: 2px dashed #667eea; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px; }
-    .password { font-size: 18px; font-weight: bold; color: #667eea; font-family: monospace; }
-    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Password Reset Request</h1>
-    </div>
-    <div class="content">
-      <p>Hi ${userName || 'there'},</p>
-      <p>Your password has been reset. Please use the temporary password below to log in:</p>
-
-      <div class="password-box">
-        <div class="password">${password}</div>
-      </div>
-
-      <div class="warning">
-        <strong>Important:</strong> Please change your password immediately after logging in for security.
-      </div>
-
-      <p>If you didn't request this password reset, please contact support immediately.</p>
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-    `;
-  }
-
-  private getWelcomeEmailTemplate(userName?: string): string {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Welcome to Leviate!</h1>
-    </div>
-    <div class="content">
-      <p>Hi ${userName || 'there'},</p>
-      <p>Your email has been verified successfully! Your account is now active.</p>
-      <p>You can now start using Leviate to connect creators with contributors.</p>
-      <p>Your initial reputation score is <strong>75</strong>. Complete tasks successfully to increase your reputation!</p>
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-    `;
-  }
-
-  private getWithdrawalOTPEmailTemplate(otp: string, userName?: string, amount?: number): string {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-    .otp-box { background: white; border: 2px dashed #667eea; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px; }
-    .otp-code { font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px; }
-    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Withdrawal OTP Verification</h1>
-    </div>
-    <div class="content">
-      <p>Hi ${userName || 'there'},</p>
-      <p>You requested to withdraw${amount ? ` <strong>&#8358;${amount}</strong>` : ' funds'} from your Leviate wallet. Please use the OTP code below to complete your withdrawal:</p>
-
-      <div class="otp-box">
-        <div class="otp-code">${otp}</div>
-      </div>
-
-      <div class="warning">
-        <strong>Security Notice:</strong> This OTP will expire in <strong>10 minutes</strong>. Do not share this code with anyone.
-      </div>
-
-      <p>If you didn't request this withdrawal, please contact support immediately.</p>
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-    `;
-  }
-
-  private getCampaignTerminationAdminAlertEmailTemplate(details: {
-    campaignTitle: string;
-    netRefundAmount: number;
-    terminationFeeAmount: number;
-    terminationRequestId: string;
-  }): string {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-    .details-box { background: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 5px; }
-    .details-box p { margin: 6px 0; }
-    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Campaign Cancellation — Action Required</h1>
-    </div>
-    <div class="content">
-      <p>Hi,</p>
-      <p>A creator has cancelled their campaign and is owed a manual refund.</p>
-
-      <div class="details-box">
-        <p><strong>Campaign:</strong> ${details.campaignTitle}</p>
-        <p><strong>Termination request ID:</strong> ${details.terminationRequestId}</p>
-        <p><strong>Cancellation fee:</strong> &#8358;${details.terminationFeeAmount.toFixed(2)}</p>
-        <p><strong>Net refund owed:</strong> &#8358;${details.netRefundAmount.toFixed(2)}</p>
-      </div>
-
-      <div class="warning">
-        <strong>Please process this refund within 24 hours</strong> from the Admin dashboard once the transfer is arranged.
-      </div>
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} Leviate. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-    `;
   }
 }
