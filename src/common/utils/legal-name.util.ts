@@ -10,15 +10,16 @@ export function tokenizePersonName(name: string): string[] {
 }
 
 /**
- * Returns true when at least two distinct name tokens from the profile
- * appear in the Paystack-resolved account name.
+ * Returns true when at least two distinct name tokens from the profile appear
+ * in a name resolved from an external identity source (a bank account name, a
+ * NIMC record). Order-insensitive, so "Ada Chidi Obi" matches "Obi Ada".
  */
-export function profileNamesMatchPaystackAccount(
+export function profileNamesMatchIdentityName(
   firstName: string,
   lastName: string,
-  paystackAccountName: string,
+  identityName: string,
 ): boolean {
-  const paystackTokens = new Set(tokenizePersonName(paystackAccountName));
+  const identityTokens = new Set(tokenizePersonName(identityName));
   const profileTokens = [
     ...new Set([...tokenizePersonName(firstName), ...tokenizePersonName(lastName)]),
   ];
@@ -28,10 +29,22 @@ export function profileNamesMatchPaystackAccount(
   }
 
   const matchingCount = profileTokens.filter((token) =>
-    paystackTokens.has(token),
+    identityTokens.has(token),
   ).length;
 
   return matchingCount >= 2;
+}
+
+/**
+ * Returns true when at least two distinct name tokens from the profile
+ * appear in the Paystack-resolved account name.
+ */
+export function profileNamesMatchPaystackAccount(
+  firstName: string,
+  lastName: string,
+  paystackAccountName: string,
+): boolean {
+  return profileNamesMatchIdentityName(firstName, lastName, paystackAccountName);
 }
 
 export function normalizeNameForComparison(name: string): string {

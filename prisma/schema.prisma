@@ -175,7 +175,9 @@ model User {
   profileComplete           Boolean    @default(false) @map("profile_complete")
   reputationScore           Int        @default(75) @map("reputation_score") // 0-100, starts at 75
   ninVerified               Boolean    @default(false) @map("nin_verified")
-  ninNumber                 String?    @map("nin_number") @db.VarChar(20) // Encrypted
+  ninNumber                 String?    @map("nin_number") @db.VarChar(255) // Encrypted as iv:ciphertext:authTag (~88 chars)
+  ninHash                   String?    @unique @map("nin_hash") @db.VarChar(64) // SHA-256 of the raw NIN — AES-GCM ciphertext is not comparable
+  ninVerifiedAt             DateTime?  @map("nin_verified_at") @db.Timestamptz(6)
   status                    UserStatus @default(ACTIVE)
   role                      UserRole   @default(USER)
   referralCode              String     @unique @map("referral_code") @db.VarChar(20)

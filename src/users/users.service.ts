@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/services/prisma.service';
 import { EncryptionService } from '../common/services/encryption.service';
+import { DojahService } from '../common/services/dojah.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OnboardingDto } from './dto/onboarding.dto';
 import { VerifyNinDto } from './dto/verify-nin.dto';
@@ -25,6 +27,10 @@ import {
   assertSocialMediaHandlesUpdateAllowed,
   assertSocialMediaPartialUpdateAllowed,
 } from '../common/utils/profile-field-cooldown.util';
+import {
+  assertNinIdentityMatchesProfile,
+  assertProfileHasLegalNamesForNin,
+} from '../common/utils/nin-verification.util';
 import { SocialVerificationService } from './social-verification.service';
 
 type ActivityRow = {
@@ -42,6 +48,7 @@ export class UsersService {
     private prisma: PrismaService,
     private encryptionService: EncryptionService,
     private socialVerificationService: SocialVerificationService,
+    private dojahService: DojahService,
   ) {}
 
   async getProfile(userId: string) {
@@ -254,29 +261,78 @@ export class UsersService {
   async verifyNIN(userId: string, verifyNinDto: VerifyNinDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
+      include: { profile: true },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Encrypt NIN number before storing
-    const encryptedNIN = this.encryptionService.encrypt(verifyNinDto.ninNumber);
+    // Dojah bills per lookup, so never re-query for an already verified user.
+    if (user.ninVerified) {
+      return {
+        message: 'Your NIN is already verified',
+        data: {
+          ninVerified: true,
+          alreadyVerified: true,
+        },
+      };
+    }
 
-    // TODO: Integrate with NIN verification API
-    // For now, we'll just mark as verified (manual verification)
-    // In production, call NIN verification service
+    const nin = verifyNinDto.ninNumber.trim();
+    if (!/^\d{11}$/.test(nin)) {
+      throw new BadRequestException('NIN must be exactly 11 digits.');
+    }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        ninNumber: encryptedNIN,
-        ninVerified: true, // Set to false if API verification fails
-      },
+    // Names must exist before the lookup — otherwise there is nothing to match against.
+    assertProfileHasLegalNamesForNin(user.profile);
+    const profile = user.profile;
+
+    const ninHash = this.encryptionService.hash(nin);
+    const existingHolder = await this.prisma.user.findFirst({
+      where: { ninHash, NOT: { id: userId } },
+      select: { id: true },
     });
+    if (existingHolder) {
+      throw new ConflictException(
+        'This NIN is already linked to another account.',
+      );
+    }
+
+    const identity = await this.dojahService.lookupNin(nin);
+
+    if (this.dojahService.isNameMatchEnforced() && !identity.mocked) {
+      assertNinIdentityMatchesProfile(profile, identity);
+    }
+
+    // NIMC is now the source of truth for this user's legal name.
+    const nameLock = legalNamesLockUpdate(profile);
+
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          ninNumber: this.encryptionService.encrypt(nin),
+          ninHash,
+          ninVerified: true,
+          ninVerifiedAt: new Date(),
+          ...(nameLock.legalNamesLockedAt
+            ? { profile: { update: nameLock } }
+            : {}),
+        },
+      });
+    } catch (error) {
+      // Unique violation: another request claimed this NIN between our check and write.
+      if ((error as { code?: string })?.code === 'P2002') {
+        throw new ConflictException(
+          'This NIN is already linked to another account.',
+        );
+      }
+      throw error;
+    }
 
     return {
-      message: 'NIN verification submitted. Verification pending.',
+      message: 'NIN verified successfully',
       data: {
         ninVerified: true,
       },

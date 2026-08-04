@@ -10,6 +10,7 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -146,11 +147,26 @@ export class UsersController {
   }
 
   @Post('verify-nin')
-  @ApiOperation({ summary: 'Verify NIN (National Identification Number)' })
+  // Each attempt is a billed Dojah lookup — cap retries well below the global limit.
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Verify NIN (National Identification Number)',
+    description:
+      'Looks the NIN up with NIMC via Dojah and requires at least two name parts to match the profile. ' +
+      'Legal names must be set first, and they are locked once verification succeeds.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'NIN verification submitted',
+    description: 'NIN verified successfully',
     type: BaseResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'NIN not found at NIMC, or the name does not match the profile',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'This NIN is already linked to another account',
   })
   async verifyNIN(
     @CurrentUser() user: any,
