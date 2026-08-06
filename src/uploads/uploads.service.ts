@@ -7,6 +7,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
+import {
+  ImageKitService,
+  ImageKitUploadResult,
+} from '../common/services/imagekit.service';
 
 const ALLOWED_IMAGE_MIMES = new Set([
   'image/jpeg',
@@ -16,11 +20,27 @@ const ALLOWED_IMAGE_MIMES = new Set([
   'image/avif',
 ]);
 
+/** Broader set for the generic ImageKit endpoint: images, documents, video. */
+const ALLOWED_UPLOAD_MIMES = new Set([
+  ...ALLOWED_IMAGE_MIMES,
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+]);
+
+const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
 @Injectable()
 export class UploadsService implements OnModuleInit {
   private readonly logger = new Logger(UploadsService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly imageKitService: ImageKitService,
+  ) {}
 
   onModuleInit() {
     const cloudName = this.config.get<string>('CLOUDINARY_CLOUD_NAME');
@@ -134,5 +154,55 @@ export class UploadsService implements OnModuleInit {
           : 'Failed to upload image. Try another file or format.',
       );
     }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* ImageKit — generic file uploads                                   */
+  /* ---------------------------------------------------------------- */
+
+  maxUploadBytes(): number {
+    const raw = this.config.get<string>('MAX_UPLOAD_FILE_SIZE');
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+    return DEFAULT_MAX_UPLOAD_BYTES;
+  }
+
+  validateUploadFile(file: Express.Multer.File): void {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('File is required');
+    }
+    const mime = (file.mimetype || '').toLowerCase();
+    if (!ALLOWED_UPLOAD_MIMES.has(mime)) {
+      throw new BadRequestException(
+        `Unsupported file type "${mime}". Allowed: JPEG, PNG, GIF, WebP, AVIF, HEIC, PDF, MP4, WebM, MOV`,
+      );
+    }
+    const max = this.maxUploadBytes();
+    if (file.size > max) {
+      throw new BadRequestException(
+        `File exceeds maximum size of ${Math.round(max / (1024 * 1024))} MB`,
+      );
+    }
+  }
+
+  /**
+   * Upload any supported file to ImageKit under `<base>/<userId>[/<folder>]`.
+   * Validation happens here, before the file leaves the server, so a rejected
+   * file never costs an ImageKit request.
+   */
+  async uploadFileToImageKit(
+    file: Express.Multer.File,
+    userId: string,
+    folder?: string,
+  ): Promise<ImageKitUploadResult> {
+    this.validateUploadFile(file);
+
+    return this.imageKitService.uploadFile(file, {
+      folder: folder ? `${userId}/${folder}` : userId,
+      fileName: file.originalname,
+      tags: [`user:${userId}`],
+    });
   }
 }
