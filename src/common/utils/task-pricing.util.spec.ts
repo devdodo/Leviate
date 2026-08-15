@@ -33,12 +33,12 @@ describe('task-pricing.util', () => {
 
   describe('locked rates', () => {
     const cases: Array<[string, string | undefined, number]> = [
-      ['MAKE_POST', 'TEXT', 250],
-      ['MAKE_POST', 'IMAGE', 750],
+      ['MAKE_POST', 'TEXT', 200],
+      ['MAKE_POST', 'IMAGE', 200],
       ['MAKE_POST', 'VIDEO', 3500],
-      ['LIKE_SHARE_SAVE_REPOST', 'TEXT', 200],
-      ['COMMENT_POST', 'TEXT', 150],
-      ['FOLLOW_ACCOUNT', 'TEXT', 450],
+      ['LIKE_SHARE_SAVE_REPOST', 'TEXT', 120],
+      ['COMMENT_POST', 'TEXT', 120],
+      ['FOLLOW_ACCOUNT', 'TEXT', 150],
     ];
 
     it.each(cases)('prices %s / %s at %i per contributor', (category, contentType, expected) => {
@@ -66,12 +66,12 @@ describe('task-pricing.util', () => {
       contentType: 'TEXT',
       contributorCount: 100,
     });
-    expect(estimate.payoutPool).toBe(25000);
-    expect(estimate.processingFee).toBe(875);
-    expect(estimate.totalBudget).toBe(25875);
+    expect(estimate.payoutPool).toBe(20000);
+    expect(estimate.processingFee).toBe(700);
+    expect(estimate.totalBudget).toBe(20700);
     // Contributors are unaffected by the processing charge.
-    expect(estimate.grossPerContributor).toBe(250);
-    expect(estimate.netPerContributor).toBe(237.5);
+    expect(estimate.grossPerContributor).toBe(200);
+    expect(estimate.netPerContributor).toBe(190);
   });
 
   it('derives contributor slots from an all-in budget when count omitted', () => {
@@ -80,10 +80,10 @@ describe('task-pricing.util', () => {
       contentType: 'TEXT',
       budget: 25875,
     });
-    expect(estimate.unitRate).toBe(150);
-    // 25,875 / (150 x 1.035) = 166.6 -> 166 slots
-    expect(estimate.contributorSlots).toBe(166);
-    expect(estimate.totalBudget).toBe(25771.5);
+    expect(estimate.unitRate).toBe(120);
+    // 25,875 / (120 x 1.035) = 208.3 -> 208 slots
+    expect(estimate.contributorSlots).toBe(208);
+    expect(estimate.totalBudget).toBe(25833.6);
   });
 
   it('uses category amount only when content type omitted', () => {
@@ -91,9 +91,9 @@ describe('task-pricing.util', () => {
       category: 'FOLLOW_ACCOUNT',
       contributorCount: 3,
     });
-    expect(estimate.unitRate).toBe(450);
-    expect(estimate.payoutPool).toBe(1350);
-    expect(estimate.totalBudget).toBe(1397.25);
+    expect(estimate.unitRate).toBe(150);
+    expect(estimate.payoutPool).toBe(450);
+    expect(estimate.totalBudget).toBe(465.75);
   });
 
   it('accepts a budget within the rounding tolerance', () => {

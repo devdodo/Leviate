@@ -6,20 +6,22 @@
  * same whatever the target post contains, so they are flat.
  *
  * Locked rates, expressed as the totals a creator pays per contributor:
- *   text post 250 | image post 750 | video post 3500
- *   like/share/save/repost 200 | comment 150 | follow 450
+ *   text post 200 | image post 200 | video post 3500
+ *   like/share/save/repost 120 | comment 120 | follow 150
+ *
+ * Only video carries a premium — an image post is priced the same as a text post.
  */
 export const DEFAULT_CATEGORY_AMOUNTS: Record<string, number> = {
-  LIKE_SHARE_SAVE_REPOST: 200,
-  COMMENT_POST: 150,
-  MAKE_POST: 250,
-  FOLLOW_ACCOUNT: 450,
+  LIKE_SHARE_SAVE_REPOST: 120,
+  COMMENT_POST: 120,
+  MAKE_POST: 200,
+  FOLLOW_ACCOUNT: 150,
 };
 
-/** Premium added on top of MAKE_POST only. TEXT is the zero baseline. */
+/** Premium added on top of MAKE_POST only. TEXT and IMAGE are the zero baseline. */
 export const DEFAULT_CONTENT_TYPE_AMOUNTS: Record<string, number> = {
-  VIDEO: 3250,
-  IMAGE: 500,
+  VIDEO: 3300,
+  IMAGE: 0,
   TEXT: 0,
 };
 

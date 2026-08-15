@@ -120,23 +120,21 @@ export class TasksService {
       { value: TaskType.MULTI, label: 'Multiple', description: 'Multiple engagements per contributor' },
     ];
 
-    const contentTypes = [
-      {
-        value: ContentType.VIDEO,
-        label: 'Video',
-        amount: getContentTypeAmount(this.taskPricing, ContentType.VIDEO),
+    // `amount` is the premium on top of MAKE_POST; `postTotal` is the locked
+    // per-contributor price of that post, so clients render the rate directly
+    // instead of adding the two themselves.
+    const makePostAmount = getCategoryAmount(this.taskPricing, TaskCategory.MAKE_POST);
+    const contentTypes = [ContentType.VIDEO, ContentType.TEXT, ContentType.IMAGE].map(
+      (value) => {
+        const amount = getContentTypeAmount(this.taskPricing, value);
+        return {
+          value,
+          label: value.charAt(0) + value.slice(1).toLowerCase(),
+          amount,
+          postTotal: makePostAmount + amount,
+        };
       },
-      {
-        value: ContentType.TEXT,
-        label: 'Text',
-        amount: getContentTypeAmount(this.taskPricing, ContentType.TEXT),
-      },
-      {
-        value: ContentType.IMAGE,
-        label: 'Image',
-        amount: getContentTypeAmount(this.taskPricing, ContentType.IMAGE),
-      },
-    ];
+    );
 
     const scheduleTypes = [
       { value: 'FIXED', label: 'Fixed', description: 'Fixed campaign window; work happens within specific dates' },
@@ -153,7 +151,8 @@ export class TasksService {
         pricing: {
           formula:
             'unitRate = category.amount + contentType.amount (MAKE_POST only; engagement tasks ignore content type). ' +
-            'payoutPool = unitRate × contributorSlots. totalBudget = payoutPool + processing charge.',
+            'payoutPool = unitRate × contributorSlots. totalBudget = payoutPool + processing charge. ' +
+            'For MAKE_POST, contentType.postTotal already carries the locked per-contributor rate.',
           processingFeePercentage: this.taskPricing.processingFeePercentage,
           contentTypePricedCategories: ['MAKE_POST'],
           currency: 'NGN',

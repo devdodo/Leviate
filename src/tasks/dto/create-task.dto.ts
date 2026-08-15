@@ -181,7 +181,7 @@ export class CreateTaskDto {
   buzzwords?: string[];
 
   @ApiProperty({
-    example: 25875,
+    example: 2070,
     minimum: 5,
     description:
       'Total campaign budget in Naira, INCLUDING the processing charge. ' +

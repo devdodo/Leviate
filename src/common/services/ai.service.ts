@@ -4,17 +4,34 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class AIService {
   private readonly logger = new Logger(AIService.name);
-  private readonly openaiApiKey: string | undefined;
+  private readonly deepseekApiKey: string | undefined;
   private readonly anthropicApiKey: string | undefined;
-  private readonly openaiModel: string;
+  private readonly deepseekBaseUrl: string;
+  private readonly deepseekModel: string;
   private readonly anthropicModel: string;
 
   constructor(private configService: ConfigService) {
-    this.openaiApiKey = this.configService.get<string>('OPENAI_API_KEY');
+    this.deepseekApiKey = this.configService.get<string>('DEEPSEEK_API_KEY');
     this.anthropicApiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
-    this.openaiModel = this.configService.get<string>('OPENAI_MODEL') || 'gpt-4';
+    this.deepseekBaseUrl =
+      this.configService.get<string>('DEEPSEEK_BASE_URL') || 'https://api.deepseek.com/v1';
+    this.deepseekModel =
+      this.configService.get<string>('DEEPSEEK_MODEL') || 'deepseek-v4-flash';
     this.anthropicModel =
       this.configService.get<string>('ANTHROPIC_MODEL') || 'claude-3-opus-20240229';
+  }
+
+  /** DeepSeek speaks the OpenAI chat-completions shape; thinking is disabled for latency. */
+  private deepseekChatBody(body: Record<string, any>): string {
+    return JSON.stringify({
+      model: this.deepseekModel,
+      thinking: { type: 'disabled' },
+      ...body,
+    });
+  }
+
+  private deepseekChatUrl(): string {
+    return `${this.deepseekBaseUrl.replace(/\/$/, '')}/chat/completions`;
   }
 
   /**
@@ -32,7 +49,7 @@ export class AIService {
     hashtags?: string[];
     buzzwords?: string[];
   }): Promise<{ brief: string; llmContext: string }> {
-    if (!this.openaiApiKey && !this.anthropicApiKey) {
+    if (!this.deepseekApiKey && !this.anthropicApiKey) {
       this.logger.warn('No AI API key configured. Returning template brief.');
       return this.generateTemplateBrief(taskData);
     }
@@ -40,8 +57,8 @@ export class AIService {
     try {
       const prompt = this.buildBriefPrompt(taskData);
 
-      if (this.openaiApiKey) {
-        return await this.generateWithOpenAI(prompt, taskData);
+      if (this.deepseekApiKey) {
+        return await this.generateWithDeepSeek(prompt, taskData);
       } else if (this.anthropicApiKey) {
         return await this.generateWithAnthropic(prompt, taskData);
       }
@@ -71,7 +88,7 @@ export class AIService {
     llmContext: string,
     threshold: number = 80,
   ): Promise<{ score: number; verified: boolean; reason?: string }> {
-    if (!this.openaiApiKey && !this.anthropicApiKey) {
+    if (!this.deepseekApiKey && !this.anthropicApiKey) {
       this.logger.warn('No AI API key configured. Skipping verification.');
       return { score: 0, verified: false, reason: 'AI service not configured' };
     }
@@ -79,8 +96,8 @@ export class AIService {
     try {
       const prompt = this.buildVerificationPrompt(submissionText, llmContext);
 
-      if (this.openaiApiKey) {
-        return await this.verifyWithOpenAI(prompt, threshold);
+      if (this.deepseekApiKey) {
+        return await this.verifyWithDeepSeek(prompt, threshold);
       } else if (this.anthropicApiKey) {
         return await this.verifyWithAnthropic(prompt, threshold);
       }
@@ -92,18 +109,17 @@ export class AIService {
     return { score: 0, verified: false, reason: 'AI service not available' };
   }
 
-  private async generateWithOpenAI(
+  private async generateWithDeepSeek(
     prompt: string,
     taskData: any,
   ): Promise<{ brief: string; llmContext: string }> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(this.deepseekChatUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.openaiApiKey}`,
+        Authorization: `Bearer ${this.deepseekApiKey}`,
       },
-      body: JSON.stringify({
-        model: this.openaiModel,
+      body: this.deepseekChatBody({
         messages: [
           {
             role: 'system',
@@ -118,7 +134,7 @@ export class AIService {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      throw new Error(`DeepSeek API error: ${response.status}`);
     }
 
     const data = await response.json();
@@ -164,18 +180,17 @@ export class AIService {
     return { brief, llmContext };
   }
 
-  private async verifyWithOpenAI(
+  private async verifyWithDeepSeek(
     prompt: string,
     threshold: number,
   ): Promise<{ score: number; verified: boolean; reason?: string }> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(this.deepseekChatUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.openaiApiKey}`,
+        Authorization: `Bearer ${this.deepseekApiKey}`,
       },
-      body: JSON.stringify({
-        model: this.openaiModel,
+      body: this.deepseekChatBody({
         messages: [
           {
             role: 'system',
@@ -190,7 +205,7 @@ export class AIService {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      throw new Error(`DeepSeek API error: ${response.status}`);
     }
 
     const data = await response.json();
@@ -384,7 +399,7 @@ This is a template brief. Configure AI service for AI-generated briefs.`;
     hashtags?: string[];
     buzzwords?: string[];
   }): Promise<{ approved: boolean; violations: string[]; reason: string }> {
-    if (!this.openaiApiKey && !this.anthropicApiKey) {
+    if (!this.deepseekApiKey && !this.anthropicApiKey) {
       this.logger.warn('No AI API key configured. Skipping content moderation.');
       return { approved: true, violations: [], reason: 'Moderation skipped — AI not configured' };
     }
@@ -392,8 +407,8 @@ This is a template brief. Configure AI service for AI-generated briefs.`;
     const prompt = this.buildModerationPrompt(taskData);
 
     try {
-      if (this.openaiApiKey) {
-        return await this.moderateWithOpenAI(prompt);
+      if (this.deepseekApiKey) {
+        return await this.moderateWithDeepSeek(prompt);
       }
       return await this.moderateWithAnthropic(prompt);
     } catch (error) {
@@ -456,17 +471,16 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
 }`;
   }
 
-  private async moderateWithOpenAI(
+  private async moderateWithDeepSeek(
     prompt: string,
   ): Promise<{ approved: boolean; violations: string[]; reason: string }> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(this.deepseekChatUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.openaiApiKey}`,
+        Authorization: `Bearer ${this.deepseekApiKey}`,
       },
-      body: JSON.stringify({
-        model: this.openaiModel,
+      body: this.deepseekChatBody({
         messages: [
           {
             role: 'system',
@@ -481,7 +495,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      throw new Error(`DeepSeek API error: ${response.status}`);
     }
 
     const data = await response.json();
@@ -558,7 +572,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
     hashtags?: string[];
     buzzwords?: string[];
   }): Promise<string> {
-    if (!this.openaiApiKey && !this.anthropicApiKey) {
+    if (!this.deepseekApiKey && !this.anthropicApiKey) {
       this.logger.warn('No AI API key configured. Returning template summary.');
       return this.generateTemplateSummary(taskData);
     }
@@ -566,8 +580,8 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
     try {
       const prompt = this.buildSummaryPrompt(taskData);
 
-      if (this.openaiApiKey) {
-        return await this.generateSummaryWithOpenAI(prompt);
+      if (this.deepseekApiKey) {
+        return await this.generateSummaryWithDeepSeek(prompt);
       } else if (this.anthropicApiKey) {
         return await this.generateSummaryWithAnthropic(prompt);
       }
@@ -580,15 +594,14 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
     return this.generateTemplateSummary(taskData);
   }
 
-  private async generateSummaryWithOpenAI(prompt: string): Promise<string> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  private async generateSummaryWithDeepSeek(prompt: string): Promise<string> {
+    const response = await fetch(this.deepseekChatUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.openaiApiKey}`,
+        Authorization: `Bearer ${this.deepseekApiKey}`,
       },
-      body: JSON.stringify({
-        model: this.openaiModel,
+      body: this.deepseekChatBody({
         messages: [
           {
             role: 'system',
@@ -604,7 +617,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+      throw new Error(`DeepSeek API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
