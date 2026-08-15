@@ -3,11 +3,13 @@ import {
   IsString,
   IsOptional,
   IsInt,
+  IsIn,
   Min,
   Max,
   IsObject,
   IsArray,
 } from 'class-validator';
+import { USER_GENDERS, UserGender } from '../../common/constants/gender';
 
 export class OnboardingDto {
   @ApiProperty({ example: 'John' })
@@ -23,6 +25,17 @@ export class OnboardingDto {
   @Min(13)
   @Max(120)
   age: number;
+
+  @ApiProperty({
+    required: false,
+    enum: USER_GENDERS,
+    example: 'FEMALE',
+    description:
+      'Used to match the contributor against gender-targeted tasks. PREFER_NOT_TO_SAY matches only tasks open to all genders, same as leaving it unset.',
+  })
+  @IsOptional()
+  @IsIn(USER_GENDERS)
+  gender?: UserGender;
 
   @ApiProperty({ example: ['Gaming', 'Technology', 'Music'], required: false })
   @IsOptional()

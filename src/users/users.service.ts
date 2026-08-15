@@ -99,6 +99,7 @@ export class UsersService {
     );
 
     const profileData: Record<string, unknown> = {
+      gender: updateProfileDto.gender,
       employmentStatus: updateProfileDto.employmentStatus,
       state: updateProfileDto.state,
       city: updateProfileDto.city,
@@ -214,6 +215,7 @@ export class UsersService {
       firstName: onboardingDto.firstName,
       lastName: onboardingDto.lastName,
       age: onboardingDto.age,
+      gender: onboardingDto.gender,
       hobbiesInterests: onboardingDto.hobbiesInterests || [],
       employmentStatus: onboardingDto.employmentStatus,
       state: onboardingDto.state,

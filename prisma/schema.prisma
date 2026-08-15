@@ -160,6 +160,15 @@ enum DisputeStatus {
   REJECTED
 }
 
+// Self-reported on the contributor profile. PREFER_NOT_TO_SAY is an answer, not a
+// blank: those profiles match only tasks open to all genders.
+enum UserGender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
 // ============================================
 // MODELS
 // ============================================
@@ -224,6 +233,7 @@ model UserProfile {
   lastName             String?   @map("last_name") @db.VarChar(100)
   legalNamesLockedAt   DateTime? @map("legal_names_locked_at") @db.Timestamptz(6)
   age                Int?
+  gender                      UserGender? // Indexed: gender-targeted tasks filter contributors on it
   hobbiesInterests            Json?     @map("hobbies_interests") // Array of strings
   hobbiesInterestsUpdatedAt   DateTime? @map("hobbies_interests_updated_at") @db.Timestamptz(6)
   employmentStatus            String?   @map("employment_status") @db.VarChar(50)
@@ -237,6 +247,7 @@ model UserProfile {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  @@index([gender])
   @@map("user_profiles")
 }
 

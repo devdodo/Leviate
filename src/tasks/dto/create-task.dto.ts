@@ -8,11 +8,13 @@ import {
   Min,
   IsDateString,
   IsObject,
+  IsIn,
   ValidateNested,
   IsUrl,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ScheduleType } from '@prisma/client';
+import { TARGET_GENDERS, TargetGender } from '../../common/constants/gender';
 // Temporary workaround: Define enums as const objects until TypeScript server refreshes
 // These enums exist in the Prisma schema and will be available after migration is applied
 const TaskType = {
@@ -55,6 +57,19 @@ export class TargetingDto {
   @IsArray()
   @IsString({ each: true })
   locations?: string[];
+
+  @ApiProperty({
+    required: false,
+    enum: TARGET_GENDERS,
+    example: 'ALL',
+    description:
+      'Optional gender filter for contributors (from GET /tasks/task-types targetGenders). ' +
+      'Omitting it, or sending ALL, opens the task to every contributor. A specific gender ' +
+      'never matches contributors who chose PREFER_NOT_TO_SAY or have not set one.',
+  })
+  @IsOptional()
+  @IsIn(TARGET_GENDERS)
+  gender?: TargetGender;
 
   @ApiProperty({ required: false, example: 'English' })
   @IsOptional()

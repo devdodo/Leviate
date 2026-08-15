@@ -2,11 +2,24 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   IsOptional,
   IsString,
+  IsIn,
   IsObject,
   IsArray,
 } from 'class-validator';
+import { USER_GENDERS, UserGender } from '../../common/constants/gender';
 
 export class UpdateProfileDto {
+  @ApiProperty({
+    required: false,
+    enum: USER_GENDERS,
+    example: 'FEMALE',
+    description:
+      'Correctable at any time — no cooldown. Changing it changes which gender-targeted tasks the contributor is matched against.',
+  })
+  @IsOptional()
+  @IsIn(USER_GENDERS)
+  gender?: UserGender;
+
   @ApiProperty({
     required: false,
     example: ['Gaming', 'Technology', 'Music'],

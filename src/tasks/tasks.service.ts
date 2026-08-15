@@ -40,6 +40,11 @@ import {
   loadTaskPricingConfig,
   TaskPricingConfig,
 } from '../common/utils/task-pricing.util';
+import {
+  matchesTargetGender,
+  TARGET_GENDERS,
+  TARGET_GENDER_LABELS,
+} from '../common/constants/gender';
 import { EstimateTaskPricingDto } from './dto/estimate-task-pricing.dto';
 // Temporary workaround: Define enums as const objects until TypeScript server refreshes
 // These enums exist in the Prisma schema and will be available after migration is applied
@@ -136,6 +141,12 @@ export class TasksService {
       },
     );
 
+    // Optional audience filter — ALL is what an omitted targeting.gender means.
+    const targetGenders = TARGET_GENDERS.map((value) => ({
+      value,
+      label: TARGET_GENDER_LABELS[value],
+    }));
+
     const scheduleTypes = [
       { value: 'FIXED', label: 'Fixed', description: 'Fixed campaign window; work happens within specific dates' },
       { value: 'VARIABLE', label: 'Variable', description: 'Flexible schedule; work can be done across a wider timeframe' },
@@ -147,6 +158,7 @@ export class TasksService {
         categories,
         taskTypes,
         contentTypes,
+        targetGenders,
         scheduleTypes,
         pricing: {
           formula:
@@ -668,7 +680,24 @@ export class TasksService {
       }
     }
 
-    // 5. Check language requirement (if specified)
+    // 5. Check gender requirement (if the creator targeted one)
+    if (targeting.gender && targeting.gender !== 'ALL') {
+      const genderMatches = matchesTargetGender(user.profile.gender, targeting.gender);
+      details.gender = {
+        matches: genderMatches,
+        taskGender: targeting.gender,
+        userGender: user.profile.gender,
+      };
+      if (!genderMatches) {
+        failureReasons.push(
+          user.profile.gender
+            ? `This task is open to ${TARGET_GENDER_LABELS[targeting.gender] ?? targeting.gender} contributors only.`
+            : 'This task targets a specific gender. Add your gender to your profile to see if you qualify.',
+        );
+      }
+    }
+
+    // 6. Check language requirement (if specified)
     if (targeting.language) {
       // Language matching: Currently assumes English proficiency for all users
       // Future enhancement: Add language preferences to user profile for multi-language support
@@ -711,7 +740,12 @@ export class TasksService {
       // User has no profile, filter out all tasks with requirements
       return tasks.filter((task) => {
         const targeting = task.targeting as any;
-        return !targeting || (!targeting.locations && !targeting.targetAudience);
+        return (
+          !targeting ||
+          (!targeting.locations &&
+            !targeting.targetAudience &&
+            matchesTargetGender(null, targeting.gender))
+        );
       });
     }
 

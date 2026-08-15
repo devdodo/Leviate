@@ -565,6 +565,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
       targetAudience?: string;
       locations?: string[];
       language?: string;
+      gender?: string;
     };
     scheduleStart: Date | string;
     scheduleEnd?: Date | string;
@@ -693,6 +694,9 @@ Respond ONLY with a valid JSON object — no markdown, no code fences:
     }
     if (taskData.targeting?.language) {
       targetingInfo.push(`Language: ${taskData.targeting.language}`);
+    }
+    if (taskData.targeting?.gender && taskData.targeting.gender !== 'ALL') {
+      targetingInfo.push(`Open to: ${taskData.targeting.gender} contributors only`);
     }
 
     return `Create a compelling, engaging task summary (2-3 sentences) that will attract social media content creators to apply for this task. Make it exciting and highlight the opportunity.
