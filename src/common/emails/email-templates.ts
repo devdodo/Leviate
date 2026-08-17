@@ -20,11 +20,14 @@ import {
   codeBox,
   detailsTable,
   escapeHtml,
+  fineprint,
+  formatDate,
   formatNaira,
   greeting,
   noticeBox,
   paragraph,
   renderLayout,
+  steps,
 } from './email-layout.util';
 
 /* ------------------------------------------------------------------ */
@@ -39,8 +42,10 @@ export function emailVerificationOtp(otp: string, userName?: string): string {
       greeting(userName) +
       paragraph(`Thanks for signing up for ${BRAND.name}. Use the code below to verify your email address and activate your account:`) +
       codeBox(otp) +
-      paragraph('This code will expire in <strong>15 minutes</strong>.') +
-      paragraph(`If you didn't create a ${BRAND.name} account, you can safely ignore this email.`),
+      fineprint(
+        `This code expires in <strong style="color:${BRAND.heading};">15 minutes</strong>. Never share it with anyone — ${BRAND.name} staff will never ask you for it.`,
+      ) +
+      fineprint(`If you didn't create a ${BRAND.name} account, you can safely ignore this email.`),
   });
 }
 
@@ -50,8 +55,26 @@ export function welcome(userName?: string): string {
     preheader: 'Your account is verified and ready to go.',
     body:
       greeting(userName) +
-      paragraph('Your email has been verified and your account is now active. 🎉') +
-      paragraph(`You can now start using ${BRAND.name} to connect creators with contributors.`) +
+      paragraph(
+        `Your email has been verified and your account is now active. ${BRAND.name} connects creators with contributors — here's how to get set up.`,
+      ) +
+      steps([
+        {
+          title: 'Complete your profile',
+          description:
+            'Add your location, interests and social handles so you get matched to the right tasks.',
+        },
+        {
+          title: 'Verify your identity',
+          description:
+            'Confirm your NIN to unlock withdrawals and higher-value campaigns.',
+        },
+        {
+          title: 'Take your first task',
+          description:
+            'Browse open campaigns, apply, and submit your first deliverable.',
+        },
+      ]) +
       noticeBox('Your starting reputation score is <strong>75</strong>. Complete tasks successfully to grow it over time.', 'info') +
       button('Go to Dashboard', BRAND.website),
   });
@@ -66,7 +89,7 @@ export function passwordReset(temporaryPassword: string, userName?: string): str
       paragraph('Your password has been reset. Use the temporary password below to log in:') +
       codeBox(temporaryPassword, { monospace: true }) +
       noticeBox('<strong>Important:</strong> For your security, change this password immediately after logging in.', 'warning') +
-      paragraph("If you didn't request this reset, please contact support right away."),
+      fineprint("If you didn't request this reset, please contact support right away."),
   });
 }
 
@@ -119,7 +142,7 @@ export function withdrawalOtp(otp: string, userName?: string, amount?: number): 
       ) +
       codeBox(otp) +
       noticeBox('<strong>Security notice:</strong> This code expires in <strong>10 minutes</strong>. Never share it with anyone.', 'warning') +
-      paragraph("If you didn't request this withdrawal, contact support immediately."),
+      fineprint("If you didn't request this withdrawal, contact support immediately."),
   });
 }
 
@@ -134,6 +157,7 @@ export function withdrawalProcessed(
   return renderLayout({
     title: 'Withdrawal successful',
     preheader: `Your withdrawal of ${details.amount} has been processed.`,
+    badge: 'Withdrawal processed',
     body:
       greeting(userName) +
       paragraph('Your withdrawal has been processed successfully and the funds are on their way to your bank account. 🎉') +
@@ -170,6 +194,7 @@ export function payoutReceived(
   return renderLayout({
     title: 'You got paid! 💰',
     preheader: `${formatNaira(details.amount)} has been credited to your wallet.`,
+    badge: 'Payout received',
     body:
       greeting(userName) +
       paragraph('A payout has just been credited to your ' + BRAND.name + ' wallet.') +
@@ -202,6 +227,45 @@ export function newApplicationReceived(
 /* ------------------------------------------------------------------ */
 /* Campaigns / tasks — contributor side                                */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Broadcast to contributors when a campaign goes live. Deliberately generic:
+ * it announces the opportunity and sends people to the task page, where the
+ * real eligibility rules are applied.
+ */
+export function newTaskAvailable(
+  details: {
+    campaignTitle: string;
+    taskUrl: string;
+    category?: string;
+    platforms?: string[];
+    payout?: number;
+    closesAt?: Date | string;
+  },
+  userName?: string,
+): string {
+  const rows: Array<[string, string]> = [];
+  if (details.category) rows.push(['Task type', escapeHtml(details.category)]);
+  if (details.platforms?.length) rows.push(['Platform', escapeHtml(details.platforms.join(', '))]);
+  if (details.payout != null) rows.push(['You earn', formatNaira(details.payout)]);
+  if (details.closesAt) rows.push(['Closes', escapeHtml(formatDate(details.closesAt))]);
+
+  return renderLayout({
+    title: 'A new task just went live',
+    preheader: `${details.campaignTitle} is open for contributors${details.payout != null ? ` — earn ${details.payout}` : ''}`,
+    badge: 'New task',
+    body:
+      greeting(userName) +
+      paragraph(
+        `<strong>${escapeHtml(details.campaignTitle)}</strong> is now open on ${BRAND.name}. Jump in to see the brief and apply.`,
+      ) +
+      (rows.length ? detailsTable(rows) : '') +
+      button('View task', details.taskUrl) +
+      fineprint(
+        'Spots are limited and filled as contributors apply, so it pays to be early. Some campaigns target a specific audience — open the task to check whether you qualify.',
+      ),
+  });
+}
 
 export function applicationApproved(
   details: { campaignTitle: string; payout?: number },

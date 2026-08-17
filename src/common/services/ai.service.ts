@@ -315,9 +315,12 @@ Generate a detailed brief that includes:
 1. Task overview
 2. Platform-specific requirements
 3. Content guidelines
-4. Expected deliverables
-5. Quality standards
-6. Any special instructions`;
+4. Quality standards
+5. Any special instructions
+
+Describe only what the task data above states. Do not invent quantities, posting
+schedules, timelines, or deliverable counts — how many pieces of content a
+contributor owes, and by when, is set by the campaign itself, not by this brief.`;
   }
 
   private buildVerificationPrompt(submissionText: string, llmContext: string): string {

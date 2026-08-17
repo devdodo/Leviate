@@ -153,3 +153,153 @@ describe('TasksService Paystack payments', () => {
     };
   }
 });
+
+describe('TasksService new-task broadcast', () => {
+  let service: TasksService;
+  let prisma: any;
+  let emailService: any;
+  let configService: any;
+
+  const publishable = {
+    id: 'task-1',
+    creatorId: 'creator-1',
+    status: 'DRAFT',
+    paymentStatus: 'PAID',
+    title: 'Summer video push',
+    taskType: 'SINGLE',
+    category: 'MAKE_POST',
+    platforms: ['instagram'],
+    scheduleType: 'FIXED',
+    scheduleStart: new Date('2026-09-01T10:00:00Z'),
+    scheduleEnd: new Date('2026-09-30T10:00:00Z'),
+    budget: 10000,
+    contributorSlots: 4,
+    platformFeePercentage: 5,
+  };
+
+  /** One page of contributors per call, then an empty page to end the walk. */
+  function contributorPages(...pages: any[][]) {
+    const queue = [...pages, []];
+    return jest.fn().mockImplementation(() => Promise.resolve(queue.shift() ?? []));
+  }
+
+  beforeEach(() => {
+    prisma = {
+      task: {
+        findUnique: jest.fn().mockResolvedValue(publishable),
+        update: jest.fn().mockResolvedValue(publishable),
+      },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    emailService = {
+      sendNewTaskAvailable: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+    };
+    configService = {
+      get: jest.fn().mockImplementation((key: string) =>
+        key === 'FRONTEND_URL' ? 'https://app.leviate.test' : undefined,
+      ),
+    };
+
+    service = new TasksService(
+      prisma,
+      { generateTaskBrief: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      configService,
+      {} as any,
+      emailService,
+    );
+  });
+
+  it('emails contributors with a link to the task once it is published', async () => {
+    prisma.user.findMany = contributorPages([
+      { id: 'u1', email: 'a@example.com', profile: { firstName: 'Ada' } },
+      { id: 'u2', email: 'b@example.com', profile: null },
+    ]);
+
+    await service.publishTask('creator-1', 'task-1');
+    await flushBroadcast();
+
+    expect(emailService.sendNewTaskAvailable).toHaveBeenCalledTimes(1);
+    const [recipients, details] = emailService.sendNewTaskAvailable.mock.calls[0];
+    expect(recipients).toEqual([
+      { email: 'a@example.com', firstName: 'Ada' },
+      { email: 'b@example.com', firstName: undefined },
+    ]);
+    expect(details.taskUrl).toBe('https://app.leviate.test/tasks/task-1');
+    expect(details.campaignTitle).toBe('Summer video push');
+    expect(details.category).toBe('Create Post');
+    // 10,000 over 4 slots, less the 5% platform fee.
+    expect(details.payout).toBe(2375);
+  });
+
+  it('excludes the creator and only mails active, verified contributors', async () => {
+    prisma.user.findMany = contributorPages([
+      { id: 'u1', email: 'a@example.com', profile: null },
+    ]);
+
+    await service.publishTask('creator-1', 'task-1');
+    await flushBroadcast();
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userType: 'CONTRIBUTOR',
+          status: 'ACTIVE',
+          emailVerified: true,
+          id: { not: 'creator-1' },
+        }),
+      }),
+    );
+  });
+
+  it('pages through contributors beyond the batch limit', async () => {
+    const page = (n: number, offset: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `u${offset + i}`,
+        email: `u${offset + i}@example.com`,
+        profile: null,
+      }));
+    prisma.user.findMany = contributorPages(page(100, 0), page(20, 100));
+
+    await service.publishTask('creator-1', 'task-1');
+    await flushBroadcast();
+
+    expect(emailService.sendNewTaskAvailable).toHaveBeenCalledTimes(2);
+    // Second page continues after the last id of the first.
+    expect(prisma.user.findMany.mock.calls[1][0]).toMatchObject({
+      cursor: { id: 'u99' },
+      skip: 1,
+    });
+  });
+
+  it('publishes successfully even when the broadcast throws', async () => {
+    prisma.user.findMany = jest.fn().mockRejectedValue(new Error('db down'));
+
+    const result = await service.publishTask('creator-1', 'task-1');
+    await flushBroadcast();
+
+    expect(result.message).toContain('published successfully');
+    expect(emailService.sendNewTaskAvailable).not.toHaveBeenCalled();
+  });
+
+  it('honours the TASK_BROADCAST_EMAIL_ENABLED off switch', async () => {
+    configService.get.mockImplementation((key: string) =>
+      key === 'TASK_BROADCAST_EMAIL_ENABLED' ? 'false' : 'https://app.leviate.test',
+    );
+    prisma.user.findMany = contributorPages([
+      { id: 'u1', email: 'a@example.com', profile: null },
+    ]);
+
+    await service.publishTask('creator-1', 'task-1');
+    await flushBroadcast();
+
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
+    expect(emailService.sendNewTaskAvailable).not.toHaveBeenCalled();
+  });
+
+  /** The broadcast is fired without await, so let its promise chain settle. */
+  function flushBroadcast() {
+    return new Promise((resolve) => setImmediate(resolve));
+  }
+});

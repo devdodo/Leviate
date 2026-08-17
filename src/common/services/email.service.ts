@@ -1,26 +1,62 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
+import * as nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 import * as templates from '../emails/email-templates';
 
-/** Resend's shared sandbox sender, usable before a domain is verified. */
-const RESEND_SANDBOX_FROM = 'onboarding@resend.dev';
-
 @Injectable()
-export class EmailService implements OnModuleInit {
+export class EmailService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EmailService.name);
-  private readonly resend: Resend | null;
+  private readonly transporter: Transporter | null;
+  private readonly host: string;
   private readonly from: string;
   private readonly replyTo?: string;
   private readonly enabled: boolean;
+  /** How many messages of a broadcast to have in flight at once. */
+  private readonly maxConnections: number;
 
   constructor(private configService: ConfigService) {
-    const apiKey = this.configService.get<string>('RESEND_API_KEY') || '';
-    this.resend = apiKey ? new Resend(apiKey) : null;
+    this.host = this.configService.get<string>('SMTP_HOST') || '';
+    const user = this.configService.get<string>('SMTP_USER') || '';
+    const pass = this.configService.get<string>('SMTP_PASSWORD') || '';
+    const port = parseInt(this.configService.get<string>('SMTP_PORT') || '465', 10);
+    // secure=true is implicit TLS (port 465); false is STARTTLS (port 587).
+    const secure =
+      (this.configService.get<string>('SMTP_SECURE') || 'true')
+        .trim()
+        .toLowerCase() !== 'false';
+
+    this.maxConnections = Math.max(
+      1,
+      parseInt(this.configService.get<string>('SMTP_MAX_CONNECTIONS') || '3', 10) || 3,
+    );
+    const rateLimit = Math.max(
+      1,
+      parseInt(this.configService.get<string>('SMTP_RATE_LIMIT') || '10', 10) || 10,
+    );
+
+    // A pooled transport keeps connections open across sends. Broadcasts would
+    // otherwise open and tear down one SMTP session per recipient, which most
+    // mailbox providers treat as abuse.
+    this.transporter =
+      this.host && user
+        ? nodemailer.createTransport({
+            host: this.host,
+            port,
+            secure,
+            auth: { user, pass },
+            pool: true,
+            maxConnections: this.maxConnections,
+            maxMessages: 100,
+            rateDelta: 1000,
+            rateLimit,
+          })
+        : null;
 
     const fromName = this.configService.get<string>('FROM_NAME') || 'Leviate';
-    const fromEmail =
-      this.configService.get<string>('FROM_EMAIL') || RESEND_SANDBOX_FROM;
+    // Most SMTP hosts reject a From that isn't the authenticated mailbox, so
+    // the mailbox itself is the safest default.
+    const fromEmail = this.configService.get<string>('FROM_EMAIL') || user;
     this.from = `${fromName} <${fromEmail}>`;
     this.replyTo = this.configService.get<string>('REPLY_TO_EMAIL') || undefined;
 
@@ -32,9 +68,9 @@ export class EmailService implements OnModuleInit {
   }
 
   /**
-   * Report the effective configuration at boot, and confirm the API key works,
-   * so a bad key or an unverified sending domain is visible in the startup log
-   * rather than only when the first email is attempted.
+   * Report the effective configuration at boot and confirm the SMTP host
+   * accepts the credentials, so a wrong password or a blocked port is visible
+   * in the startup log rather than only when the first email is attempted.
    *
    * Deliberately not awaited: a broken email path must not delay app startup.
    */
@@ -45,61 +81,44 @@ export class EmailService implements OnModuleInit {
       );
       return;
     }
-    if (!this.resend) {
-      this.logger.warn('RESEND_API_KEY not configured. Email not sent.');
+    if (!this.transporter) {
+      this.logger.warn(
+        'SMTP_HOST/SMTP_USER not configured. Email not sent.',
+      );
       return;
     }
 
-    this.logger.log(`Email provider: Resend | from: ${this.from}`);
+    this.logger.log(`Email provider: SMTP ${this.host} | from: ${this.from}`);
     void this.verifyConfiguration();
   }
 
+  /** Release pooled SMTP connections on shutdown. */
+  onModuleDestroy(): void {
+    this.transporter?.close();
+  }
+
   /**
-   * Lists the account's domains to prove the key is valid and to surface the
-   * verification status of the sending domain. A send-only key cannot read
-   * domains, which is not an error — it just can't be checked this way.
+   * Opens a connection and authenticates, without sending anything. This is
+   * where a blocked outbound port shows up: many hosts (Render, some VPS
+   * providers) firewall 465/587, and the failure looks like a timeout.
    */
   private async verifyConfiguration(): Promise<void> {
-    if (!this.resend) return;
+    if (!this.transporter) return;
 
     try {
-      const { data, error } = await this.resend.domains.list();
-
-      if (error) {
-        this.logger.warn(
-          `Could not verify Resend configuration: ${error.message}. ` +
-            `This is expected for a send-only API key; a 401/invalid_api_key means the key is wrong.`,
-        );
-        return;
-      }
-
-      const domains = data?.data ?? [];
-      const sendingDomain = this.from.split('@').pop()?.replace('>', '').trim();
-      const match = domains.find((d) => d.name === sendingDomain);
-
-      if (sendingDomain === 'resend.dev') {
-        this.logger.warn(
-          `Sending from Resend's sandbox address (${RESEND_SANDBOX_FROM}). ` +
-            `It only delivers to your own Resend account address — set FROM_EMAIL to a verified domain for real sends.`,
-        );
-      } else if (!match) {
-        this.logger.error(
-          `Domain "${sendingDomain}" is not registered in Resend. Add it under Domains, ` +
-            `publish the DNS records it gives you, then set FROM_EMAIL to an address on that domain.`,
-        );
-      } else if (match.status !== 'verified') {
-        this.logger.error(
-          `Domain "${sendingDomain}" is registered but its status is "${match.status}". ` +
-            `Sends will be rejected until the DNS records are published and it verifies.`,
-        );
-      } else {
-        this.logger.log(
-          `Resend verified — domain "${sendingDomain}" is ready to send.`,
-        );
-      }
+      await this.transporter.verify();
+      this.logger.log(`SMTP verified — ${this.host} accepted the credentials.`);
     } catch (error) {
-      const err = error as Error;
-      this.logger.warn(`Resend verification check failed: ${err.message}`);
+      const err = error as Error & { code?: string };
+      const hint =
+        err.code === 'ETIMEDOUT' || err.code === 'ESOCKET'
+          ? ' The host did not answer — check that outbound SMTP is not blocked by the network, and that SMTP_PORT/SMTP_SECURE match (465 = secure true, 587 = secure false).'
+          : err.code === 'EAUTH'
+            ? ' The credentials were rejected — SMTP_USER must be the full mailbox address and SMTP_PASSWORD that mailbox password.'
+            : '';
+      this.logger.error(
+        `SMTP verification failed for ${this.host}: ${err.message}.${hint}`,
+      );
     }
   }
 
@@ -388,42 +407,149 @@ export class EmailService implements OnModuleInit {
   }
 
   /* -------------------------------------------------------------- */
+  /* Broadcasts                                                     */
+  /* -------------------------------------------------------------- */
+
+  /**
+   * Announce a newly published task to a batch of contributors.
+   *
+   * Each recipient gets their own message (personally addressed, no shared
+   * To/BCC list, so nobody sees anyone else's address). Callers should hand
+   * this one page of recipients at a time rather than the whole user base —
+   * see `TasksService.notifyContributorsOfNewTask`.
+   */
+  async sendNewTaskAvailable(
+    recipients: Array<{ email: string; firstName?: string | null }>,
+    details: {
+      campaignTitle: string;
+      taskUrl: string;
+      category?: string;
+      platforms?: string[];
+      payout?: number;
+      closesAt?: Date | string;
+    },
+  ): Promise<{ sent: number; failed: number }> {
+    const valid = recipients.filter((r) => r.email);
+    if (valid.length === 0) {
+      return { sent: 0, failed: 0 };
+    }
+
+    const subject = `New task on Leviate: ${details.campaignTitle}`;
+    return this.sendBatch(
+      valid.map((recipient) => ({
+        to: recipient.email,
+        subject,
+        html: templates.newTaskAvailable(details, recipient.firstName ?? undefined),
+      })),
+    );
+  }
+
+  /* -------------------------------------------------------------- */
   /* Delivery                                                       */
   /* -------------------------------------------------------------- */
 
-  private async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
-    if (!this.enabled || !this.resend) {
+  /**
+   * Send many distinct messages.
+   *
+   * SMTP has no batch endpoint — each message is its own transaction — so this
+   * walks the list with a small number of sends in flight, bounded by the same
+   * `maxConnections` the pool is built with. Failures are counted per message
+   * rather than thrown: one bad address must not abandon the rest of a
+   * broadcast, and a broadcast must never fail the action that triggered it.
+   */
+  private async sendBatch(
+    payloads: Array<{ to: string; subject: string; html: string }>,
+  ): Promise<{ sent: number; failed: number }> {
+    if (!this.enabled || !this.transporter) {
       this.logger.warn(
         this.enabled
-          ? 'RESEND_API_KEY not configured. Email not sent.'
+          ? 'SMTP_HOST/SMTP_USER not configured. Batch not sent.'
+          : 'Email sending is disabled. Batch not sent.',
+      );
+      this.logger.debug(`Would send ${payloads.length} emails`);
+      return { sent: 0, failed: 0 };
+    }
+
+    let sent = 0;
+    let failed = 0;
+    let next = 0;
+
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const index = next++;
+        if (index >= payloads.length) return;
+        const ok = await this.deliver(payloads[index], { quiet: true });
+        if (ok) sent++;
+        else failed++;
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(this.maxConnections, payloads.length) }, worker),
+    );
+
+    this.logger.log(`Batch sent: ${sent}/${payloads.length} emails (failed: ${failed})`);
+    return { sent, failed };
+  }
+
+  private async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
+    if (!this.enabled || !this.transporter) {
+      this.logger.warn(
+        this.enabled
+          ? 'SMTP_HOST/SMTP_USER not configured. Email not sent.'
           : 'Email sending is disabled. Email not sent.',
       );
       this.logger.debug(`Would send email to: ${payload.to} | Subject: ${payload.subject}`);
       return;
     }
 
+    await this.deliver(payload);
+  }
+
+  /**
+   * The one place a message actually reaches the transport. Never throws, so
+   * callers can fire and forget; returns whether the host accepted it.
+   *
+   * `quiet` suppresses the per-message success log, which would otherwise
+   * produce one line per recipient during a broadcast.
+   */
+  private async deliver(
+    payload: { to: string; subject: string; html: string },
+    opts: { quiet?: boolean } = {},
+  ): Promise<boolean> {
+    if (!this.transporter) return false;
+
     try {
-      // Resend reports failures in the `error` field rather than throwing.
-      const { data, error } = await this.resend.emails.send({
+      const info = await this.transporter.sendMail({
         from: this.from,
-        to: [payload.to],
+        to: payload.to,
         subject: payload.subject,
         html: payload.html,
         ...(this.replyTo ? { replyTo: this.replyTo } : {}),
       });
 
-      if (error) {
+      // A host can accept the session but reject individual recipients.
+      if (info.rejected?.length) {
         this.logger.error(
-          `Failed to send email to ${payload.to}: ${error.name} — ${error.message}`,
+          `Recipient rejected by ${this.host}: ${info.rejected.join(', ')}`,
         );
-        return;
+        return false;
       }
 
-      this.logger.log(`Email sent successfully to: ${payload.to} (id: ${data?.id})`);
+      if (!opts.quiet) {
+        this.logger.log(
+          `Email sent successfully to: ${payload.to} (id: ${info.messageId})`,
+        );
+      }
+      return true;
     } catch (error) {
       const err = error as Error;
-      this.logger.error(`Failed to send email: ${err.message}`, err.stack);
+      this.logger.error(
+        `Failed to send email to ${payload.to}: ${err.message}`,
+        err.stack,
+      );
       // Don't throw - allow app to continue even if email fails
+      return false;
     }
   }
 }

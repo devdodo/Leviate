@@ -45,6 +45,7 @@ import {
   TARGET_GENDERS,
   TARGET_GENDER_LABELS,
 } from '../common/constants/gender';
+import { TASK_CATEGORY_LABELS } from '../common/constants/task-categories';
 import { EstimateTaskPricingDto } from './dto/estimate-task-pricing.dto';
 // Temporary workaround: Define enums as const objects until TypeScript server refreshes
 // These enums exist in the Prisma schema and will be available after migration is applied
@@ -96,25 +97,25 @@ export class TasksService {
     const categories = [
       {
         value: TaskCategory.LIKE_SHARE_SAVE_REPOST,
-        label: 'Engagement (Likes, Repost, Retweet)',
+        label: TASK_CATEGORY_LABELS.LIKE_SHARE_SAVE_REPOST,
         description: 'Get likes, reposts, shares, or saves on your content',
         amount: getCategoryAmount(this.taskPricing, TaskCategory.LIKE_SHARE_SAVE_REPOST),
       },
       {
         value: TaskCategory.COMMENT_POST,
-        label: 'Comments',
+        label: TASK_CATEGORY_LABELS.COMMENT_POST,
         description: 'Get comments on your post',
         amount: getCategoryAmount(this.taskPricing, TaskCategory.COMMENT_POST),
       },
       {
         value: TaskCategory.MAKE_POST,
-        label: 'Create Post',
+        label: TASK_CATEGORY_LABELS.MAKE_POST,
         description: 'Have contributors create and publish a post',
         amount: getCategoryAmount(this.taskPricing, TaskCategory.MAKE_POST),
       },
       {
         value: TaskCategory.FOLLOW_ACCOUNT,
-        label: 'Follow',
+        label: TASK_CATEGORY_LABELS.FOLLOW_ACCOUNT,
         description: 'Get contributors to follow your account',
         amount: getCategoryAmount(this.taskPricing, TaskCategory.FOLLOW_ACCOUNT),
       },
@@ -2028,10 +2029,105 @@ export class TasksService {
       } as any,
     });
 
+    // Announce it to contributors. Deliberately not awaited: a slow or failing
+    // mail provider must not hold up (or fail) the publish request.
+    void this.notifyContributorsOfNewTask(publishedTask);
+
     return {
       message: 'Task published successfully. It is now visible to contributors.',
       data: publishedTask,
     };
+  }
+
+  /**
+   * Email every eligible contributor that a task just went live.
+   *
+   * Walks the contributor list in batches rather than loading it all at once,
+   * so this stays flat in memory as the user base grows. Anything that goes
+   * wrong is logged and swallowed — the task is already published by this point.
+   */
+  private async notifyContributorsOfNewTask(task: any): Promise<void> {
+    const enabled =
+      (this.configService.get<string>('TASK_BROADCAST_EMAIL_ENABLED') || 'true')
+        .trim()
+        .toLowerCase() !== 'false';
+    if (!enabled) {
+      this.logger.log(
+        `[task-broadcast] skipped taskId=${task.id} (TASK_BROADCAST_EMAIL_ENABLED=false)`,
+      );
+      return;
+    }
+
+    try {
+      const frontendUrl =
+        this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3001';
+      const platforms = Array.isArray(task.platforms)
+        ? (task.platforms as any[]).filter((p) => typeof p === 'string')
+        : [];
+
+      const details = {
+        campaignTitle: task.title,
+        taskUrl: `${frontendUrl.replace(/\/$/, '')}/tasks/${task.id}`,
+        category: TASK_CATEGORY_LABELS[task.category as string] ?? undefined,
+        platforms,
+        payout: contributorNetPayoutAmount(task),
+        closesAt: task.scheduleEnd ?? undefined,
+      };
+
+      // Page size doubles as the broadcast chunk handed to the mail transport.
+      const pageSize = 100;
+      let cursor: string | undefined;
+      let sent = 0;
+      let failed = 0;
+
+      for (;;) {
+        const contributors = await this.prisma.user.findMany({
+          where: {
+            userType: 'CONTRIBUTOR' as any,
+            status: 'ACTIVE' as any,
+            emailVerified: true,
+            id: { not: task.creatorId },
+          },
+          select: {
+            id: true,
+            email: true,
+            profile: { select: { firstName: true } },
+          },
+          orderBy: { id: 'asc' },
+          take: pageSize,
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        });
+
+        if (contributors.length === 0) {
+          break;
+        }
+
+        const result = await this.emailService.sendNewTaskAvailable(
+          contributors.map((c) => ({
+            email: c.email,
+            firstName: c.profile?.firstName,
+          })),
+          details,
+        );
+        sent += result.sent;
+        failed += result.failed;
+
+        cursor = contributors[contributors.length - 1].id;
+        if (contributors.length < pageSize) {
+          break;
+        }
+      }
+
+      this.logger.log(
+        `[task-broadcast] taskId=${task.id} sent=${sent} failed=${failed}`,
+      );
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error(
+        `[task-broadcast] failed for taskId=${task.id}: ${err.message}`,
+        err.stack,
+      );
+    }
   }
 
   async getTaskSummary(userId: string, taskId: string) {
