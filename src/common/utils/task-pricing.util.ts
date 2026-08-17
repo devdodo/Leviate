@@ -5,13 +5,18 @@
  * actually produces the media. Engagement tasks (like/comment/follow) cost the
  * same whatever the target post contains, so they are flat.
  *
- * Locked rates, expressed as the totals a creator pays per contributor:
+ * LOCKED rates — the totals a creator pays per contributor:
  *   text post 200 | image post 200 | video post 3500
  *   like/share/save/repost 120 | comment 120 | follow 150
  *
  * Only video carries a premium — an image post is priced the same as a text post.
+ *
+ * These are deliberately NOT env-configurable. They used to be, and a stale
+ * override on a deployed host silently served old prices while the code said
+ * otherwise — the rates are business-critical, so they live here and change
+ * only by a code edit that the tests below have to agree with.
  */
-export const DEFAULT_CATEGORY_AMOUNTS: Record<string, number> = {
+export const LOCKED_CATEGORY_AMOUNTS: Record<string, number> = {
   LIKE_SHARE_SAVE_REPOST: 120,
   COMMENT_POST: 120,
   MAKE_POST: 200,
@@ -19,7 +24,7 @@ export const DEFAULT_CATEGORY_AMOUNTS: Record<string, number> = {
 };
 
 /** Premium added on top of MAKE_POST only. TEXT and IMAGE are the zero baseline. */
-export const DEFAULT_CONTENT_TYPE_AMOUNTS: Record<string, number> = {
+export const LOCKED_CONTENT_TYPE_PREMIUMS: Record<string, number> = {
   VIDEO: 3300,
   IMAGE: 0,
   TEXT: 0,
@@ -76,41 +81,24 @@ function parsePositiveAmount(value: string | undefined, fallback: number): numbe
   return n;
 }
 
-/** Build pricing tables from env (see env.example TASK_CATEGORY_AMOUNT_* / TASK_CONTENT_TYPE_AMOUNT_*). */
+/**
+ * Build the pricing config. The rate tables are the locked constants above and
+ * ignore the environment entirely; only the processing charge — a payment-
+ * provider cost, not a rate we quote — still reads from env.
+ */
 export function loadTaskPricingConfig(
   getEnv: (key: string) => string | undefined = () => undefined,
 ): TaskPricingConfig {
-  const categories: Record<string, number> = {};
-  for (const [key, fallback] of Object.entries(DEFAULT_CATEGORY_AMOUNTS)) {
-    categories[key] = parsePositiveAmount(getEnv(`TASK_CATEGORY_AMOUNT_${key}`), fallback);
-  }
-
-  const contentTypes: Record<string, number> = {};
-  for (const [key, fallback] of Object.entries(DEFAULT_CONTENT_TYPE_AMOUNTS)) {
-    contentTypes[key] = parsePositiveAmount(getEnv(`TASK_CONTENT_TYPE_AMOUNT_${key}`), fallback);
-  }
-
   const processingFeePercentage = parsePositiveAmount(
     getEnv('PROCESSING_FEE_PERCENTAGE'),
     DEFAULT_PROCESSING_FEE_PERCENTAGE,
   );
 
-  const jsonOverride = getEnv('TASK_PRICING_JSON');
-  if (jsonOverride?.trim()) {
-    try {
-      const parsed = JSON.parse(jsonOverride) as Partial<TaskPricingConfig>;
-      if (parsed.categories && typeof parsed.categories === 'object') {
-        Object.assign(categories, parsed.categories);
-      }
-      if (parsed.contentTypes && typeof parsed.contentTypes === 'object') {
-        Object.assign(contentTypes, parsed.contentTypes);
-      }
-    } catch {
-      // ignore invalid JSON; use env keys / defaults
-    }
-  }
-
-  return { categories, contentTypes, processingFeePercentage };
+  return {
+    categories: { ...LOCKED_CATEGORY_AMOUNTS },
+    contentTypes: { ...LOCKED_CONTENT_TYPE_PREMIUMS },
+    processingFeePercentage,
+  };
 }
 
 export function getCategoryAmount(
@@ -154,6 +142,18 @@ export function getUnitRate(
     getCategoryAmount(config, category) +
     getApplicableContentTypeAmount(config, category, contentType)
   );
+}
+
+/**
+ * What a creator pays per contributor for a MAKE_POST of this content type —
+ * text 200, image 200, video 3500. This is the number to show a user; the raw
+ * premium (0 for text) is an implementation detail of how the total is built.
+ */
+export function getPostRate(
+  config: TaskPricingConfig,
+  contentType: string,
+): number {
+  return getUnitRate(config, 'MAKE_POST', contentType);
 }
 
 /**

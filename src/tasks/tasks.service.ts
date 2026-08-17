@@ -36,6 +36,7 @@ import {
   estimateTaskPricing as computeTaskPricingEstimate,
   getCategoryAmount,
   getContentTypeAmount,
+  getPostRate,
   isBudgetAlignedWithPricing,
   loadTaskPricingConfig,
   TaskPricingConfig,
@@ -126,18 +127,19 @@ export class TasksService {
       { value: TaskType.MULTI, label: 'Multiple', description: 'Multiple engagements per contributor' },
     ];
 
-    // `amount` is the premium on top of MAKE_POST; `postTotal` is the locked
-    // per-contributor price of that post, so clients render the rate directly
-    // instead of adding the two themselves.
-    const makePostAmount = getCategoryAmount(this.taskPricing, TaskCategory.MAKE_POST);
+    // `amount` is the locked per-contributor price of a post of this type — the
+    // number to render. It used to be the premium, which read as "text posts
+    // cost 0"; the premium is now `premium`, kept only for the breakdown, and
+    // `postTotal` stays as an alias of `amount` for clients already on it.
     const contentTypes = [ContentType.VIDEO, ContentType.TEXT, ContentType.IMAGE].map(
       (value) => {
-        const amount = getContentTypeAmount(this.taskPricing, value);
+        const amount = getPostRate(this.taskPricing, value);
         return {
           value,
           label: value.charAt(0) + value.slice(1).toLowerCase(),
           amount,
-          postTotal: makePostAmount + amount,
+          postTotal: amount,
+          premium: getContentTypeAmount(this.taskPricing, value),
         };
       },
     );
@@ -163,9 +165,10 @@ export class TasksService {
         scheduleTypes,
         pricing: {
           formula:
-            'unitRate = category.amount + contentType.amount (MAKE_POST only; engagement tasks ignore content type). ' +
-            'payoutPool = unitRate × contributorSlots. totalBudget = payoutPool + processing charge. ' +
-            'For MAKE_POST, contentType.postTotal already carries the locked per-contributor rate.',
+            'For MAKE_POST, unitRate = contentType.amount — it is already the full locked ' +
+            'per-contributor rate, so do NOT add category.amount to it. For every other ' +
+            'category, unitRate = category.amount and content type is ignored. ' +
+            'payoutPool = unitRate × contributorSlots. totalBudget = payoutPool + processing charge.',
           processingFeePercentage: this.taskPricing.processingFeePercentage,
           contentTypePricedCategories: ['MAKE_POST'],
           currency: 'NGN',

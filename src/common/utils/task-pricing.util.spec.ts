@@ -1,25 +1,33 @@
 import {
-  DEFAULT_CATEGORY_AMOUNTS,
-  DEFAULT_CONTENT_TYPE_AMOUNTS,
   DEFAULT_PROCESSING_FEE_PERCENTAGE,
   estimateTaskPricing,
+  getPostRate,
   isBudgetAlignedWithPricing,
   loadTaskPricingConfig,
+  LOCKED_CATEGORY_AMOUNTS,
+  LOCKED_CONTENT_TYPE_PREMIUMS,
 } from './task-pricing.util';
 
 describe('task-pricing.util', () => {
   const config = {
-    categories: { ...DEFAULT_CATEGORY_AMOUNTS },
-    contentTypes: { ...DEFAULT_CONTENT_TYPE_AMOUNTS },
+    categories: { ...LOCKED_CATEGORY_AMOUNTS },
+    contentTypes: { ...LOCKED_CONTENT_TYPE_PREMIUMS },
     processingFeePercentage: DEFAULT_PROCESSING_FEE_PERCENTAGE,
   };
 
-  it('loads overrides from env keys', () => {
+  it('ignores env attempts to override the locked rates', () => {
     const loaded = loadTaskPricingConfig((key) =>
-      key === 'TASK_CONTENT_TYPE_AMOUNT_VIDEO' ? '4000' : undefined,
+      ({
+        TASK_CONTENT_TYPE_AMOUNT_VIDEO: '4000',
+        TASK_CATEGORY_AMOUNT_MAKE_POST: '500',
+        TASK_CATEGORY_AMOUNT_FOLLOW_ACCOUNT: '450',
+        TASK_PRICING_JSON: '{"categories":{"COMMENT_POST":999}}',
+      })[key],
     );
-    expect(loaded.contentTypes.VIDEO).toBe(4000);
-    expect(loaded.contentTypes.TEXT).toBe(DEFAULT_CONTENT_TYPE_AMOUNTS.TEXT);
+    expect(loaded.contentTypes.VIDEO).toBe(3300);
+    expect(loaded.categories.MAKE_POST).toBe(200);
+    expect(loaded.categories.FOLLOW_ACCOUNT).toBe(150);
+    expect(loaded.categories.COMMENT_POST).toBe(120);
   });
 
   it('loads the processing fee from env, defaulting to 3.5%', () => {
@@ -48,6 +56,13 @@ describe('task-pricing.util', () => {
         contributorCount: 1,
       });
       expect(estimate.unitRate).toBe(expected);
+    });
+
+    // What the task-types endpoint serves as contentTypes[].amount.
+    it('quotes post rates of 200 / 200 / 3500 for text / image / video', () => {
+      expect(getPostRate(config, 'TEXT')).toBe(200);
+      expect(getPostRate(config, 'IMAGE')).toBe(200);
+      expect(getPostRate(config, 'VIDEO')).toBe(3500);
     });
   });
 
