@@ -138,7 +138,7 @@ export class AIService {
     }
 
     const data = await response.json();
-    const brief = data.choices[0]?.message?.content || '';
+    const brief = this.toPlainText(data.choices[0]?.message?.content || '');
 
     const llmContext = this.generateLLMContext(taskData, brief);
 
@@ -173,7 +173,7 @@ export class AIService {
     }
 
     const data = await response.json();
-    const brief = data.content[0]?.text || '';
+    const brief = this.toPlainText(data.content[0]?.text || '');
 
     const llmContext = this.generateLLMContext(taskData, brief);
 
@@ -320,7 +320,62 @@ Generate a detailed brief that includes:
 
 Describe only what the task data above states. Do not invent quantities, posting
 schedules, timelines, or deliverable counts — how many pieces of content a
-contributor owes, and by when, is set by the campaign itself, not by this brief.`;
+contributor owes, and by when, is set by the campaign itself, not by this brief.
+
+Write in PLAIN TEXT. The brief is displayed as-is, so Markdown is not rendered
+and its syntax shows up literally. Do not start lines with #, -, *, > or |, and
+do not use **bold**, _italics_, backticks, tables, or --- rules. Write section
+headings as an ordinary line of text and use short paragraphs.`;
+  }
+
+  /**
+   * Strip Markdown from a generated brief.
+   *
+   * The brief is rendered as plain text, so any Markdown the model emits shows
+   * up as literal punctuation at the start of every line ("## 1. Task Overview",
+   * "- **Platform:** Twitter"). The prompt asks for plain text, but models
+   * reliably fall back to Markdown for anything structured, so the output is
+   * cleaned rather than trusted.
+   *
+   * List items keep a "• " marker: they are genuinely lists, and a bullet is a
+   * character readers expect rather than syntax leaking through.
+   */
+  private toPlainText(markdown: string): string {
+    const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+
+    const cleaned = lines
+      // Fence markers and horizontal rules carry no text — drop the whole line.
+      .filter((line) => !/^\s*(```|~~~)/.test(line))
+      .filter((line) => !/^\s{0,3}([-*_])\s*(\1\s*){2,}$/.test(line))
+      .map((line) =>
+        line
+          // "## Heading" and the rarely-used closing "##"
+          .replace(/^\s{0,3}#{1,6}\s+/, '')
+          .replace(/\s+#+\s*$/, '')
+          // "> quoted"
+          .replace(/^\s{0,3}>\s?/, '')
+          // "- item" / "* item" / "+ item", preserving indentation
+          .replace(/^(\s*)[-*+]\s+/, '$1• '),
+      );
+
+    return (
+      cleaned
+        .join('\n')
+        // ![alt](url) before [text](url), so image alt text is not left bracketed.
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/__([^_]+)__/g, '$1')
+        .replace(/~~([^~]+)~~/g, '$1')
+        // Single-marker emphasis only when it wraps a word, so snake_case
+        // identifiers and standalone asterisks survive.
+        .replace(/(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])/g, '$1')
+        .replace(/(?<![\w_])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w_])/g, '$1')
+        .replace(/`([^`\n]+)`/g, '$1')
+        // Removing rules and fences leaves runs of blank lines behind.
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    );
   }
 
   private buildVerificationPrompt(submissionText: string, llmContext: string): string {
