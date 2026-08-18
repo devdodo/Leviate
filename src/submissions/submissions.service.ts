@@ -83,6 +83,8 @@ export class SubmissionsService {
         category: true,
         status: true,
         budget: true,
+        payoutPool: true,
+        contributorSlots: true,
         platformFeePercentage: true,
         audiencePreferences: true,
         targeting: true,

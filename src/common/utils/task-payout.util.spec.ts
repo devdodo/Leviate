@@ -38,14 +38,40 @@ describe('task-payout.util', () => {
     expect(inferContributorSlotsFromBudgetFields(100000, 10000)).toBe(10);
   });
 
-  it('calculates net per-contributor payout after platform fee', () => {
+  it('pays the contributor the full share, taking no platform fee', () => {
     expect(
       contributorNetPayoutAmount({
         contributorSlots: 10,
-        budget: 100000,
+        payoutPool: 100000,
+        budget: 107000,
+        platformFeePercentage: 7,
+      }),
+    ).toBe(10000);
+  });
+
+  it('divides the payout pool, never the fee-inclusive funded budget', () => {
+    // Creator funded 107,000 = 100,000 pool + 7% fee. Contributors split the
+    // pool only; dividing `budget` would hand them the platform fee.
+    expect(
+      contributorGrossPerShare({
+        contributorSlots: 10,
+        payoutPool: 100000,
+        budget: 107000,
+      }),
+    ).toBe(10000);
+  });
+
+  it('falls back to budget as the pool for pre-fee-move campaigns', () => {
+    // Campaigns created before the fee moved to the creator funded the pool
+    // exactly, so budget IS the pool and contributors get the full rate.
+    expect(
+      contributorNetPayoutAmount({
+        contributorSlots: 93,
+        budget: 325500,
+        payoutPool: null,
         platformFeePercentage: 5,
       }),
-    ).toBe(9500);
+    ).toBe(3500);
   });
 
   it('ignores legacy budgetPerTask when it stores the full campaign budget', () => {
@@ -63,27 +89,28 @@ describe('task-payout.util', () => {
         budgetPerTask: 100000,
         platformFeePercentage: 5,
       }),
-    ).toBe(9500);
+    ).toBe(10000);
   });
 
-  it('splits a single-slot campaign and applies platform fee', () => {
+  it('gives a single-slot campaign the whole pool', () => {
     expect(
       contributorNetPayoutAmount({
         contributorSlots: 1,
-        budget: 812250,
-        platformFeePercentage: 5,
+        payoutPool: 812250,
+        budget: 869107.5,
+        platformFeePercentage: 7,
       }),
-    ).toBe(771637.5);
+    ).toBe(812250);
   });
 
   it('allotted pay is budget ÷ required contributors, not ÷ workers who showed up', () => {
     expect(
       contributorNetPayoutAmount({
         contributorSlots: 20,
-        budget: 800000,
-        platformFeePercentage: 5,
+        payoutPool: 800000,
+        platformFeePercentage: 7,
       }),
-    ).toBe(38000);
+    ).toBe(40000);
     expect(
       resolveRequiredContributorSlots({
         contributorSlots: 20,

@@ -27,6 +27,7 @@ import {
 import {
   contributorNetPayoutAmount,
   contributorPayoutBreakdown,
+  resolvePayoutPool,
   parsePositiveInt,
   resolveContributorSlotsForPersistence,
   resolveRequiredContributorSlots,
@@ -168,8 +169,11 @@ export class TasksService {
             'For MAKE_POST, unitRate = contentType.amount — it is already the full locked ' +
             'per-contributor rate, so do NOT add category.amount to it. For every other ' +
             'category, unitRate = category.amount and content type is ignored. ' +
-            'payoutPool = unitRate × contributorSlots. totalBudget = payoutPool + processing charge.',
-          processingFeePercentage: this.taskPricing.processingFeePercentage,
+            'payoutPool = unitRate × contributorSlots, and contributors receive that in full. ' +
+            'totalBudget = payoutPool + platform fee, charged to the creator at task creation.',
+          platformFeePercentage: this.taskPricing.platformFeePercentage,
+          platformFeePaidBy: 'CREATOR',
+          contributorDeduction: 0,
           contentTypePricedCategories: ['MAKE_POST'],
           currency: 'NGN',
         },
@@ -202,8 +206,8 @@ export class TasksService {
     if (!isBudgetAlignedWithPricing(createTaskDto.budget, estimate)) {
       throw new BadRequestException(
         `Budget must be ${estimate.totalBudget} NGN — ${estimate.unitRate} per contributor × ` +
-          `${estimate.contributorSlots} contributors = ${estimate.payoutPool}, plus ` +
-          `${estimate.processingFeePercentage}% charges (${estimate.processingFee}). ` +
+          `${estimate.contributorSlots} contributors = ${estimate.payoutPool} paid out in full, plus ` +
+          `${estimate.platformFeePercentage}% platform fee (${estimate.platformFee}). ` +
           `Breakdown: category ${estimate.categoryAmount} + content type ${estimate.contentTypeAmount}.`,
       );
     }
@@ -305,6 +309,10 @@ export class TasksService {
         hashtags: createTaskDto.hashtags || [],
         buzzwords: createTaskDto.buzzwords || [],
         budget: createTaskDto.budget,
+        // The creator funds pool + fee; contributors are paid from the pool
+        // alone, so it is stored rather than re-derived from the funded total.
+        payoutPool: pricing.payoutPool,
+        platformFeePercentage: pricing.platformFeePercentage,
         contributorSlots,
         budgetPerTask: grossPerContributor,
         totalBudget: createTaskDto.budget,
@@ -774,6 +782,7 @@ export class TasksService {
     if (!rawTask) return rawTask;
     const payout = contributorPayoutBreakdown({
       budget: rawTask.budget,
+      payoutPool: rawTask.payoutPool,
       contributorSlots: rawTask.contributorSlots,
       taskType: rawTask.taskType,
       audiencePreferences: rawTask.audiencePreferences,
@@ -790,6 +799,7 @@ export class TasksService {
       paymentAuthorizationUrl: _pa,
       paymentVerifiedAt: _pv,
       budget: _b,
+      payoutPool: _pool,
       totalBudget: _tb,
       platformFeePercentage: _pf,
       budgetPerTask: _legacyBpt,
@@ -1333,12 +1343,14 @@ export class TasksService {
       if (!isBudgetAlignedWithPricing(mergedBudget, estimate)) {
         throw new BadRequestException(
           `Budget must be ${estimate.totalBudget} NGN — ${estimate.unitRate} × ` +
-            `${estimate.contributorSlots} contributors = ${estimate.payoutPool}, plus ` +
-            `${estimate.processingFeePercentage}% charges (${estimate.processingFee}).`,
+            `${estimate.contributorSlots} contributors = ${estimate.payoutPool} paid out in full, plus ` +
+            `${estimate.platformFeePercentage}% platform fee (${estimate.platformFee}).`,
         );
       }
 
       updateData.contributorSlots = estimate.contributorSlots;
+      updateData.payoutPool = estimate.payoutPool;
+      updateData.platformFeePercentage = estimate.platformFeePercentage;
       updateData.budgetPerTask = estimate.grossPerContributor;
       updateData.totalBudget = estimate.totalBudget;
       updateData.budget = mergedBudget;
@@ -1360,7 +1372,14 @@ export class TasksService {
         updateTaskDto.audiencePreferences !== undefined
       ) {
         updateData.contributorSlots = slots;
-        updateData.budgetPerTask = mergedBudget / slots;
+        // Headcount changed but funding did not, so the pool is unchanged and
+        // only the per-contributor share moves. Divide the pool, never the
+        // funded total — that would pay the platform fee out to contributors.
+        updateData.budgetPerTask =
+          resolvePayoutPool({
+            payoutPool: (task as any).payoutPool,
+            budget: mergedBudget,
+          }) / slots;
         updateData.totalBudget = mergedBudget;
       }
     }
@@ -2239,10 +2258,8 @@ export class TasksService {
       throw new NotFoundException('User not found');
     }
 
-    const budgetAmount = Number(taskData.budget) || 0;
-    const platformFeePercentage = Number(taskData.platformFeePercentage) || 5;
-    const platformFee = (budgetAmount * platformFeePercentage) / 100;
-    const totalAmount = budgetAmount + platformFee;
+    const charge = this.resolveChargeBreakdown(taskData);
+    const totalAmount = charge.total;
 
     const existingReference = taskData.paymentReference as string | null | undefined;
     const existingStatus = taskData.paymentStatus as string | null | undefined;
@@ -2293,9 +2310,10 @@ export class TasksService {
         paystackPublicKey,
         paystackMode: this.paystackService.getKeyMode(),
         breakdown: {
-          budget: budgetAmount,
-          platformFee,
-          total: totalAmount,
+          // What contributors are paid, and the fee the creator adds on top.
+          payoutPool: charge.payoutPool,
+          platformFee: charge.platformFee,
+          total: charge.total,
         },
       },
     };
@@ -2465,15 +2483,55 @@ export class TasksService {
     };
   }
 
+  /**
+   * What the creator is charged at checkout, in Naira.
+   *
+   * `budget` on a current campaign is already all-in (payout pool + platform
+   * fee), so the charge IS the budget — adding the fee again would bill it
+   * twice. Legacy campaigns predate `payoutPool`: their budget is the bare pool
+   * and the fee was applied at checkout, so those keep the old sum.
+   *
+   * Initialization and verification both go through here; when they each did
+   * their own arithmetic, a change to one silently broke the other.
+   */
+  private resolveChargeBreakdown(task: any): {
+    payoutPool: number;
+    platformFee: number;
+    total: number;
+  } {
+    const budgetAmount = Number(task.budget) || 0;
+    const platformFeePercentage = Number(task.platformFeePercentage) || 7;
+
+    if (task.payoutPool !== null && task.payoutPool !== undefined) {
+      const payoutPool = Number(task.payoutPool) || 0;
+      return {
+        payoutPool,
+        platformFee: Math.round((budgetAmount - payoutPool) * 100) / 100,
+        total: budgetAmount,
+      };
+    }
+
+    const platformFee =
+      Math.round(((budgetAmount * platformFeePercentage) / 100) * 100) / 100;
+    return {
+      payoutPool: budgetAmount,
+      platformFee,
+      total: budgetAmount + platformFee,
+    };
+  }
+
+  private resolveChargeableAmount(task: any): number {
+    return this.resolveChargeBreakdown(task).total;
+  }
+
   private assertPaystackVerificationMatchesTask(
     task: any,
     paystackData: any,
     metadata: Record<string, string>,
   ): void {
     const budgetAmount = Number(task.budget) || 0;
-    const platformFeePercentage = Number(task.platformFeePercentage) || 5;
-    const platformFee = (budgetAmount * platformFeePercentage) / 100;
-    const expectedAmountKobo = Math.round((budgetAmount + platformFee) * 100);
+    const platformFeePercentage = Number(task.platformFeePercentage) || 7;
+    const expectedAmountKobo = Math.round(this.resolveChargeableAmount(task) * 100);
     const paidAmountKobo = Number(paystackData.amount);
 
     this.logger.log(

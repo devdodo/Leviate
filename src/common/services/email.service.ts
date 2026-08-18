@@ -110,8 +110,13 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`SMTP verified — ${this.host} accepted the credentials.`);
     } catch (error) {
       const err = error as Error & { code?: string };
-      const hint =
-        err.code === 'ETIMEDOUT' || err.code === 'ESOCKET'
+      // A cert mismatch also surfaces as ESOCKET, but the cause is the opposite
+      // of a blocked port: the host answered, it just is not the name on the
+      // certificate. Check it first so the hint does not misdirect.
+      const isCertMismatch = /certificate|altnames/i.test(err.message);
+      const hint = isCertMismatch
+        ? ` SMTP_HOST is not a name on the server's TLS certificate. Use the mail server's own hostname (shown in its SMTP banner, e.g. <server>.web-hosting.com) rather than a mail.<yourdomain> alias.`
+        : err.code === 'ETIMEDOUT' || err.code === 'ESOCKET'
           ? ' The host did not answer — check that outbound SMTP is not blocked by the network, and that SMTP_PORT/SMTP_SECURE match (465 = secure true, 587 = secure false).'
           : err.code === 'EAUTH'
             ? ' The credentials were rejected — SMTP_USER must be the full mailbox address and SMTP_PASSWORD that mailbox password.'

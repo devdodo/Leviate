@@ -214,6 +214,7 @@ export class RecommendationsService {
         id: true,
         title: true,
         budget: true,
+        payoutPool: true,
         contributorSlots: true,
         platformFeePercentage: true,
         taskType: true,

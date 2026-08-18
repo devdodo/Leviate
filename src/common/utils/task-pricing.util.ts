@@ -5,7 +5,7 @@
  * actually produces the media. Engagement tasks (like/comment/follow) cost the
  * same whatever the target post contains, so they are flat.
  *
- * LOCKED rates — the totals a creator pays per contributor:
+ * LOCKED rates — the amount a contributor is paid, in full, per contribution:
  *   text post 200 | image post 200 | video post 3500
  *   like/share/save/repost 120 | comment 120 | follow 150
  *
@@ -14,7 +14,7 @@
  * These are deliberately NOT env-configurable. They used to be, and a stale
  * override on a deployed host silently served old prices while the code said
  * otherwise — the rates are business-critical, so they live here and change
- * only by a code edit that the tests below have to agree with.
+ * only by a code edit that the tests have to agree with.
  */
 export const LOCKED_CATEGORY_AMOUNTS: Record<string, number> = {
   LIKE_SHARE_SAVE_REPOST: 120,
@@ -33,13 +33,20 @@ export const LOCKED_CONTENT_TYPE_PREMIUMS: Record<string, number> = {
 /** Categories where the contributor produces media, so content type affects price. */
 const CONTENT_PRICED_CATEGORIES = new Set(['MAKE_POST']);
 
-/** Payment-processing charge added on top of the contributor payout pool. */
-export const DEFAULT_PROCESSING_FEE_PERCENTAGE = 3.5;
+/**
+ * Platform fee, charged to the CREATOR on top of the payout pool at task
+ * creation. Contributors are never charged: they receive the full locked rate.
+ *
+ * This replaced an older split — a 5% deduction from contributor earnings plus
+ * a separate processing charge on the creator. There is now exactly one fee, on
+ * one side, so a rate quoted to a contributor is the amount they actually get.
+ */
+export const DEFAULT_PLATFORM_FEE_PERCENTAGE = 7;
 
 export type TaskPricingConfig = {
   categories: Record<string, number>;
   contentTypes: Record<string, number>;
-  processingFeePercentage: number;
+  platformFeePercentage: number;
 };
 
 export type TaskPricingEstimateInput = {
@@ -48,7 +55,6 @@ export type TaskPricingEstimateInput = {
   contributorCount?: number | null;
   budget?: number | null;
   platformFeePercentage?: number;
-  processingFeePercentage?: number;
 };
 
 export type TaskPricingEstimate = {
@@ -56,18 +62,19 @@ export type TaskPricingEstimate = {
   contentTypeAmount: number;
   unitRate: number;
   contributorSlots: number;
-  /** unitRate × contributorSlots — what contributors collectively gross. */
+  /** unitRate × contributorSlots — paid out to contributors in full. */
   payoutPool: number;
-  processingFeePercentage: number;
-  /** Payment-processing charge added on top of the pool. */
-  processingFee: number;
-  /** What the creator funds: payoutPool + processingFee. */
-  totalBudget: number;
-  grossPerContributor: number;
   platformFeePercentage: number;
+  /** Charged to the creator on top of the pool. */
   platformFee: number;
+  /** What the creator funds: payoutPool + platformFee. */
+  totalBudget: number;
+  /** What one contributor receives. No deduction — equal to unitRate. */
+  payoutPerContributor: number;
+  /** @deprecated Aliases of payoutPerContributor; gross and net are now equal. */
+  grossPerContributor: number;
+  /** @deprecated Aliases of payoutPerContributor; gross and net are now equal. */
   netPerContributor: number;
-  netBudget: number;
 };
 
 function parsePositiveAmount(value: string | undefined, fallback: number): number {
@@ -83,21 +90,21 @@ function parsePositiveAmount(value: string | undefined, fallback: number): numbe
 
 /**
  * Build the pricing config. The rate tables are the locked constants above and
- * ignore the environment entirely; only the processing charge — a payment-
- * provider cost, not a rate we quote — still reads from env.
+ * ignore the environment entirely; only the platform fee reads from env, so it
+ * can be tuned without a deploy.
  */
 export function loadTaskPricingConfig(
   getEnv: (key: string) => string | undefined = () => undefined,
 ): TaskPricingConfig {
-  const processingFeePercentage = parsePositiveAmount(
-    getEnv('PROCESSING_FEE_PERCENTAGE'),
-    DEFAULT_PROCESSING_FEE_PERCENTAGE,
+  const platformFeePercentage = parsePositiveAmount(
+    getEnv('PLATFORM_FEE_PERCENTAGE'),
+    DEFAULT_PLATFORM_FEE_PERCENTAGE,
   );
 
   return {
     categories: { ...LOCKED_CATEGORY_AMOUNTS },
     contentTypes: { ...LOCKED_CONTENT_TYPE_PREMIUMS },
-    processingFeePercentage,
+    platformFeePercentage,
   };
 }
 
@@ -145,9 +152,9 @@ export function getUnitRate(
 }
 
 /**
- * What a creator pays per contributor for a MAKE_POST of this content type —
- * text 200, image 200, video 3500. This is the number to show a user; the raw
- * premium (0 for text) is an implementation detail of how the total is built.
+ * What a contributor is paid per MAKE_POST of this content type — text 200,
+ * image 200, video 3500. This is the number to show a user; the raw premium
+ * (0 for text) is an implementation detail of how the total is built.
  */
 export function getPostRate(
   config: TaskPricingConfig,
@@ -157,8 +164,8 @@ export function getPostRate(
 }
 
 /**
- * payoutPool  = unitRate × contributorSlots
- * totalBudget = payoutPool + processing charge (what the creator funds)
+ * payoutPool  = unitRate × contributorSlots   (contributors get this, in full)
+ * totalBudget = payoutPool + platform fee     (what the creator funds)
  *
  * Slots come from an explicit count, or from floor(budget / all-in per slot)
  * when only a budget is given.
@@ -179,16 +186,15 @@ export function estimateTaskPricing(
     throw new Error(`No pricing configured for category ${input.category}`);
   }
 
-  const platformFeePercentage = Number(input.platformFeePercentage ?? 5);
-  const processingFeePercentage = Number(
-    input.processingFeePercentage ?? config.processingFeePercentage,
+  const platformFeePercentage = Number(
+    input.platformFeePercentage ?? config.platformFeePercentage,
   );
   const explicitSlots = parseContributorCount(input.contributorCount);
   const budget = input.budget != null ? Number(input.budget) : null;
 
-  // A budget-only estimate quotes an all-in figure, so back the processing
-  // charge out before deriving slots — otherwise it buys slots it can't fund.
-  const perSlotAllIn = unitRate * (1 + processingFeePercentage / 100);
+  // A budget-only estimate quotes an all-in figure, so back the platform fee
+  // out before deriving slots — otherwise it buys slots it cannot fund.
+  const perSlotAllIn = unitRate * (1 + platformFeePercentage / 100);
 
   let contributorSlots: number;
   if (explicitSlots) {
@@ -200,15 +206,8 @@ export function estimateTaskPricing(
   }
 
   const payoutPool = unitRate * contributorSlots;
-  const processingFee = (payoutPool * processingFeePercentage) / 100;
-  const totalBudget = payoutPool + processingFee;
-
-  const grossPerContributor = unitRate;
-  // The platform fee is charged on contributor earnings, not on the
-  // processing charge, so it is calculated from the pool.
   const platformFee = (payoutPool * platformFeePercentage) / 100;
-  const netBudget = payoutPool - platformFee;
-  const netPerContributor = (grossPerContributor * (100 - platformFeePercentage)) / 100;
+  const totalBudget = payoutPool + platformFee;
 
   return {
     categoryAmount,
@@ -216,14 +215,12 @@ export function estimateTaskPricing(
     unitRate,
     contributorSlots,
     payoutPool,
-    processingFeePercentage,
-    processingFee: Math.round(processingFee * 100) / 100,
-    totalBudget: Math.round(totalBudget * 100) / 100,
-    grossPerContributor,
     platformFeePercentage,
     platformFee: Math.round(platformFee * 100) / 100,
-    netPerContributor: Math.round(netPerContributor * 100) / 100,
-    netBudget: Math.round(netBudget * 100) / 100,
+    totalBudget: Math.round(totalBudget * 100) / 100,
+    payoutPerContributor: unitRate,
+    grossPerContributor: unitRate,
+    netPerContributor: unitRate,
   };
 }
 

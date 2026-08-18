@@ -76,6 +76,67 @@ describe('TasksService Paystack payments', () => {
     expect(result.message).toBe('Payment verified successfully');
   });
 
+  it('charges a current campaign exactly its budget, not budget plus fee again', async () => {
+    // budget is already all-in: 10,000 pool + 700 platform fee at 7%.
+    prisma.task.findUnique.mockResolvedValue(
+      buildTask({ budget: 10700, payoutPool: 10000, platformFeePercentage: 7 }),
+    );
+    prisma.user.findUnique.mockResolvedValue(buildCreator());
+    paystackService.initializePayment.mockResolvedValue({
+      data: {
+        authorization_url: 'https://checkout.paystack.com/new',
+        reference: 'TASK_NEW',
+      },
+    });
+    prisma.task.update.mockResolvedValue({});
+
+    await service.initiatePayment('creator-1', 'task-1');
+
+    expect(paystackService.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 10700 }),
+    );
+  });
+
+  it('accepts a payment of exactly the all-in budget for a current campaign', async () => {
+    prisma.task.findUnique
+      .mockResolvedValueOnce(
+        buildTask({
+          paymentReference: 'TASK_REF_1',
+          budget: 10700,
+          payoutPool: 10000,
+          platformFeePercentage: 7,
+        }),
+      )
+      .mockResolvedValueOnce(null);
+    paystackService.verifyPayment.mockResolvedValue({
+      data: buildPaystackVerification({ amount: 1070000 }),
+    });
+    prisma.task.update.mockResolvedValue(buildTask({ paymentStatus: 'PAID' }));
+
+    const result = await service.verifyPayment('creator-1', 'TASK_REF_1');
+
+    expect(result.message).toBe('Payment verified successfully');
+  });
+
+  it('still adds the fee at checkout for legacy pool-only budgets', async () => {
+    // No payoutPool: budget is the bare pool, so the 5% is added as before.
+    prisma.task.findUnique.mockResolvedValue(buildTask({ budget: 10000 }));
+    prisma.user.findUnique.mockResolvedValue(buildCreator());
+    paystackService.initializePayment.mockResolvedValue({
+      data: {
+        authorization_url: 'https://checkout.paystack.com/new',
+        reference: 'TASK_NEW',
+      },
+    });
+    prisma.task.update.mockResolvedValue({});
+
+    await service.initiatePayment('creator-1', 'task-1');
+
+    expect(paystackService.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 10500 }),
+    );
+  });
+
   it('resolves task from Paystack metadata when DB reference was overwritten', async () => {
     prisma.task.findUnique
       .mockResolvedValueOnce(null)
@@ -229,8 +290,9 @@ describe('TasksService new-task broadcast', () => {
     expect(details.taskUrl).toBe('https://app.leviate.test/tasks/task-1');
     expect(details.campaignTitle).toBe('Summer video push');
     expect(details.category).toBe('Create Post');
-    // 10,000 over 4 slots, less the 5% platform fee.
-    expect(details.payout).toBe(2375);
+    // 10,000 over 4 slots, paid in full — the platform fee is charged to the
+    // creator at task creation, never deducted from the contributor.
+    expect(details.payout).toBe(2500);
   });
 
   it('excludes the creator and only mails active, verified contributors', async () => {

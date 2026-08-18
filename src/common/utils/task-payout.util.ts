@@ -32,13 +32,18 @@ export function toNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * The fee charged to the CREATOR at task creation. It is recorded per task, so
+ * a campaign keeps the rate it was quoted even if the platform rate changes.
+ * It is NOT deducted from contributor earnings — see contributorNetPayoutAmount.
+ */
 export function resolvePlatformFeePercentage(value: unknown): number {
   if (value === undefined || value === null || value === '') {
-    return 5;
+    return 7;
   }
   const n = toNumber(value);
   if (!Number.isFinite(n) || n < 0) {
-    return 5;
+    return 7;
   }
   if (n > 100) {
     return 100;
@@ -119,11 +124,30 @@ export type ContributorSlotsInput = {
   contributorSlots?: number | null;
   taskType?: string | null;
   budget?: unknown;
+  /** Contributor share of the budget, excluding the creator platform fee. */
+  payoutPool?: unknown;
   budgetPerTask?: unknown;
   platformFeePercentage?: unknown;
   audiencePreferences?: unknown;
   targeting?: unknown;
 };
+
+/**
+ * The pot contributors are paid from.
+ *
+ * `budget` is what the creator funded — pool + platform fee — so dividing it
+ * would hand the fee to contributors. `payoutPool` is stored at creation and is
+ * the authority. It is null on campaigns created before the fee moved to the
+ * creator side; those funded the pool exactly, so `budget` is already the pool
+ * and the fallback is correct rather than merely tolerable.
+ */
+export function resolvePayoutPool(task: ContributorSlotsInput): number {
+  const pool = toNumber(task.payoutPool);
+  if (pool > 0) {
+    return pool;
+  }
+  return toNumber(task.budget);
+}
 
 /**
  * Required contributor headcount set when the campaign is created (stored as contributor_slots).
@@ -162,22 +186,23 @@ export function resolveContributorSlots(task: ContributorSlotsInput): number {
   return resolveRequiredContributorSlots(task);
 }
 
-/** Gross Naira for one contributor slot: total budget ÷ required contributors (not ÷ who actually worked). */
+/** Naira for one contributor slot: payout pool ÷ required contributors (not ÷ who actually worked). */
 export function contributorGrossPerShare(task: ContributorSlotsInput): number {
-  const gross = toNumber(task.budget);
+  const pool = resolvePayoutPool(task);
   const slots = resolveRequiredContributorSlots(task);
-  if (!(gross > 0 && slots > 0)) {
+  if (!(pool > 0 && slots > 0)) {
     return 0;
   }
-  return Math.round((gross / slots) * 100) / 100;
+  return Math.round((pool / slots) * 100) / 100;
 }
 
-/** Net Naira each contributor earns after platform fee. */
+/**
+ * What a contributor is actually paid. The platform fee is charged to the
+ * creator at task creation, so nothing is deducted here — this is equal to
+ * the share, and to the rate advertised on the marketplace.
+ */
 export function contributorNetPayoutAmount(task: ContributorSlotsInput): number {
-  const perGross = contributorGrossPerShare(task);
-  const feePct = resolvePlatformFeePercentage(task.platformFeePercentage);
-  const net = (perGross * (100 - feePct)) / 100;
-  return Math.round(net * 100) / 100;
+  return contributorGrossPerShare(task);
 }
 
 export function contributorPayoutBreakdown(task: ContributorSlotsInput): {

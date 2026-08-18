@@ -295,9 +295,10 @@ model Task {
   hashtags              Json? // Array of strings
   buzzwords             Json? // Array of strings
   status                TaskStatus   @default(DRAFT)
-  budget                Decimal      @map("budget") @db.Decimal(10, 2) // Single budget amount
+  budget                Decimal      @map("budget") @db.Decimal(10, 2) // What the creator funds: payoutPool + platform fee
+  payoutPool            Decimal?     @map("payout_pool") @db.Decimal(10, 2) // Contributor pot, excludes the platform fee. Null on pre-fee-move campaigns, where budget IS the pool.
   contributorSlots      Int          @default(1) @map("contributor_slots") // Planned contributors completing the task
-  platformFeePercentage Decimal      @default(5) @map("platform_fee_percentage") @db.Decimal(5, 2)
+  platformFeePercentage Decimal      @default(7) @map("platform_fee_percentage") @db.Decimal(5, 2) // Charged to the CREATOR at creation, never deducted from contributors
   aiGeneratedBrief      String?      @map("ai_generated_brief") @db.Text
   llmContextFile        String?      @map("llm_context_file") @db.Text // LLM.txt content
   contributorSummary    String?      @map("contributor_summary") @db.Text // AI-generated summary for prospective contributors

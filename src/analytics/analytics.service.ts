@@ -66,7 +66,6 @@ export class AnalyticsService {
         },
         select: {
           budget: true,
-          platformFeePercentage: true,
         },
       }),
     ]);
@@ -111,14 +110,13 @@ export class AnalyticsService {
     };
   }
 
-  private campaignSpendAmount(task: {
-    budget: unknown;
-    platformFeePercentage: unknown;
-  }): number {
-    const budget = Number(task.budget ?? 0);
-    const feePct = Number(task.platformFeePercentage ?? 0);
-    const platformFee = (budget * feePct) / 100;
-    return budget + platformFee;
+  /**
+   * `budget` is the amount the creator funded, and since the platform fee is
+   * charged on top at task creation it is already included. Adding the fee
+   * again here would double-count it.
+   */
+  private campaignSpendAmount(task: { budget: unknown }): number {
+    return Number(task.budget ?? 0);
   }
 
   private async countDistinctParticipants(creatorId: string): Promise<number> {
