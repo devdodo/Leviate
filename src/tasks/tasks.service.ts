@@ -203,12 +203,20 @@ export class TasksService {
       budget: createTaskDto.budget,
     });
 
-    if (!isBudgetAlignedWithPricing(createTaskDto.budget, estimate)) {
+    // `budget` is optional: the server already knows the rate, the slot count
+    // and the fee, so it derives the figure itself. When a client does send
+    // one it is still checked — it is what the creator gets charged, so a
+    // mismatch must fail loudly rather than be silently overwritten.
+    if (
+      createTaskDto.budget !== undefined &&
+      !isBudgetAlignedWithPricing(createTaskDto.budget, estimate)
+    ) {
       throw new BadRequestException(
         `Budget must be ${estimate.totalBudget} NGN — ${estimate.unitRate} per contributor × ` +
           `${estimate.contributorSlots} contributors = ${estimate.payoutPool} paid out in full, plus ` +
           `${estimate.platformFeePercentage}% platform fee (${estimate.platformFee}). ` +
-          `Breakdown: category ${estimate.categoryAmount} + content type ${estimate.contentTypeAmount}.`,
+          `Breakdown: category ${estimate.categoryAmount} + content type ${estimate.contentTypeAmount}. ` +
+          `Omit budget entirely to have it calculated for you.`,
       );
     }
 
@@ -297,7 +305,11 @@ export class TasksService {
         platforms: [createTaskDto.platform],
         goals: [],
         contentType: createTaskDto.contentType,
-        resourceLink: createTaskDto.category === 'MAKE_POST' ? null : createTaskDto.resourceLink,
+        // Kept for every category, MAKE_POST included: a creator's reference
+        // link (the sound to use, the post to riff on) is an INPUT to the work.
+        // It is not the contributor's submission link, which is a separate
+        // field captured as evidence at review time.
+        resourceLink: createTaskDto.resourceLink ?? null,
         audiencePreferences: createTaskDto.audiencePreferences || {},
         targeting: (createTaskDto.targeting || {}) as any,
         scheduleType: createTaskDto.scheduleType,
@@ -308,14 +320,17 @@ export class TasksService {
         commentsInstructions: createTaskDto.commentsInstructions,
         hashtags: createTaskDto.hashtags || [],
         buzzwords: createTaskDto.buzzwords || [],
-        budget: createTaskDto.budget,
+        // The server's own figure, not the submitted one. They agree to within
+        // the ±1 rounding tolerance when a client sends a budget, and this is
+        // the amount actually charged, so the exact value has to be ours.
+        budget: pricing.totalBudget,
         // The creator funds pool + fee; contributors are paid from the pool
         // alone, so it is stored rather than re-derived from the funded total.
         payoutPool: pricing.payoutPool,
         platformFeePercentage: pricing.platformFeePercentage,
         contributorSlots,
         budgetPerTask: grossPerContributor,
-        totalBudget: createTaskDto.budget,
+        totalBudget: pricing.totalBudget,
         status,
         aiGeneratedBrief: brief,
         llmContextFile: llmContext,
@@ -1203,6 +1218,7 @@ export class TasksService {
       budgetLabel: this.formatBudgetLabelFromAmount(net, task.scheduleType),
       scheduleType: task.scheduleType,
       platforms: task.platforms,
+      resourceLink: task.resourceLink,
       proposalCount: task._count?.applications ?? 0,
     };
   }
@@ -1313,8 +1329,7 @@ export class TasksService {
     if (updateTaskDto.taskType) updateData.taskType = updateTaskDto.taskType;
     if (updateTaskDto.contentType) updateData.contentType = updateTaskDto.contentType;
     if (updateTaskDto.resourceLink !== undefined) {
-      const taskCategoryForResource = updateTaskDto.category ?? (task as any).category;
-      updateData.resourceLink = taskCategoryForResource === 'MAKE_POST' ? null : updateTaskDto.resourceLink;
+      updateData.resourceLink = updateTaskDto.resourceLink;
     }
     if (updateTaskDto.audiencePreferences !== undefined) {
       updateData.audiencePreferences = updateTaskDto.audiencePreferences;
@@ -1340,11 +1355,18 @@ export class TasksService {
         budget: mergedBudget,
       });
 
-      if (!isBudgetAlignedWithPricing(mergedBudget, estimate)) {
+      // Only the budget a caller actually supplied is checked. Otherwise
+      // changing headcount alone would be validated against the stored budget,
+      // which is by definition stale the moment the slot count moves.
+      if (
+        updateTaskDto.budget !== undefined &&
+        !isBudgetAlignedWithPricing(updateTaskDto.budget, estimate)
+      ) {
         throw new BadRequestException(
           `Budget must be ${estimate.totalBudget} NGN — ${estimate.unitRate} × ` +
             `${estimate.contributorSlots} contributors = ${estimate.payoutPool} paid out in full, plus ` +
-            `${estimate.platformFeePercentage}% platform fee (${estimate.platformFee}).`,
+            `${estimate.platformFeePercentage}% platform fee (${estimate.platformFee}). ` +
+            `Omit budget entirely to have it recalculated for you.`,
         );
       }
 
@@ -1353,7 +1375,9 @@ export class TasksService {
       updateData.platformFeePercentage = estimate.platformFeePercentage;
       updateData.budgetPerTask = estimate.grossPerContributor;
       updateData.totalBudget = estimate.totalBudget;
-      updateData.budget = mergedBudget;
+      // Recalculated, so a headcount change repriced the campaign correctly
+      // instead of leaving the old funded total attached to new slot count.
+      updateData.budget = estimate.totalBudget;
     } else {
       const mergedPrefs =
         updateTaskDto.audiencePreferences ?? (task as any).audiencePreferences;

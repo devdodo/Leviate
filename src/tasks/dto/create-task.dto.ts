@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsOptional,
@@ -123,7 +123,7 @@ export class CreateTaskDto {
     required: false,
     example: 'https://instagram.com/p/example',
     description:
-      'Resource link (post URL, account URL). Not used for MAKE_POST — contributors submit their post link as evidence for admin verification.',
+      'Reference link the contributor works from — the post to engage with, the account to follow, or for MAKE_POST the sound/post to riff on. Applies to every category. Distinct from the link a contributor submits as evidence of completed work.',
   })
   @IsOptional()
   @IsString()
@@ -195,24 +195,32 @@ export class CreateTaskDto {
   @IsString({ each: true })
   buzzwords?: string[];
 
-  @ApiProperty({
-    example: 2070,
+  @ApiPropertyOptional({
+    example: 262150,
     minimum: 5,
     description:
-      'Total campaign budget in Naira, INCLUDING the processing charge. ' +
+      'OPTIONAL — omit it and the server calculates the budget from category, ' +
+      'contentType and contributorCount, which is the recommended flow. ' +
+      'If you do send it, it must match to within 1 Naira or the request is ' +
+      'rejected, since this is the amount the creator is charged. ' +
       'unitRate = category rate (+ content type rate for MAKE_POST only); ' +
-      'budget = unitRate × contributorCount, plus the processing charge on top. ' +
-      'Use POST /tasks/pricing/estimate to get the exact figure — do not compute it client-side.',
+      'payoutPool = unitRate × contributorCount, paid to contributors in full; ' +
+      'budget = payoutPool + the platform fee charged to the creator. ' +
+      'POST /tasks/pricing/estimate returns the exact figure as totalBudget.',
   })
+  @IsOptional()
   @IsNumber()
   @Min(5)
-  budget: number;
+  budget?: number;
 
   @ApiProperty({
     example: 10,
     minimum: 1,
     description:
-      'Required number of contributors the campaign budget covers. Each verified contributor is paid (budget ÷ contributorCount) after platform fee — not divided by how many actually work.',
+      'Required number of contributors the campaign covers, and the main driver of price. ' +
+      'Each verified contributor is paid the full locked rate (payoutPool ÷ contributorCount) ' +
+      'with nothing deducted — the platform fee is charged to the creator on top. ' +
+      'The pool is divided by this number, not by how many contributors actually work.',
   })
   @IsNumber()
   @Min(1)

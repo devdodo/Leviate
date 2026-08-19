@@ -56,8 +56,10 @@ export class TasksController {
   @ApiOperation({
     summary: 'Estimate campaign budget and contributor slots from category + content type rates',
     description:
-      'unitRate = category.amount + contentType.amount. totalBudget = unitRate × contributorSlots. ' +
-      'Provide contributorCount or budget (slots derived as floor(budget / unitRate)).',
+      'unitRate = category.amount + contentType.amount (content type applies to MAKE_POST only). ' +
+      'payoutPool = unitRate × contributorSlots — contributors receive this in full. ' +
+      'totalBudget = payoutPool + platform fee, charged to the creator; submit THIS as `budget` on task creation. ' +
+      'Provide contributorCount, or a budget from which slots are derived as floor(budget / (unitRate × (1 + fee))).',
   })
   @ApiResponse({ status: 200, type: BaseResponseDto })
   async estimateTaskPricing(@Body() dto: EstimateTaskPricingDto) {

@@ -10,12 +10,14 @@ describe('TasksService Paystack payments', () => {
   let prisma: any;
   let paystackService: any;
   let configService: any;
+  let aiService: any;
 
   beforeEach(() => {
     prisma = {
       task: {
         findUnique: jest.fn(),
         update: jest.fn(),
+        create: jest.fn((args: any) => ({ id: 'task-new', ...args.data })),
       },
       user: {
         findUnique: jest.fn(),
@@ -30,9 +32,16 @@ describe('TasksService Paystack payments', () => {
       get: jest.fn().mockReturnValue('https://app.leviate.test'),
     };
 
+    aiService = {
+      generateTaskBrief: jest.fn().mockResolvedValue({ brief: 'b', llmContext: 'c' }),
+      moderateTaskContent: jest
+        .fn()
+        .mockResolvedValue({ approved: true, violations: [], reason: '' }),
+    };
+
     service = new TasksService(
       prisma,
-      { generateTaskBrief: jest.fn() } as any,
+      aiService as any,
       {} as any,
       paystackService,
       configService,
@@ -213,6 +222,99 @@ describe('TasksService Paystack payments', () => {
       ...overrides,
     };
   }
+
+  describe('task creation', () => {
+    const creator = {
+      id: 'creator-1',
+      userType: 'CREATOR',
+      emailVerified: true,
+    };
+
+    // Exactly the payload that was failing, with the budget corrected to the
+    // all-in total: 3500 x 70 = 245,000 pool + 7% fee = 262,150.
+    const dto = {
+      taskType: 'SINGLE',
+      category: 'MAKE_POST',
+      title: 'Do WWYLM Video',
+      description: 'Help do a video with the song WWYLM.',
+      platform: 'tiktok',
+      resourceLink: 'https://tiktok.com/cccccxx',
+      contentType: 'VIDEO',
+      scheduleType: 'FIXED',
+      scheduleStart: '2026-08-19T00:00:00Z',
+      scheduleEnd: '2026-09-27T00:00:00Z',
+      commentsInstructions: '',
+      hashtags: ['#wwylm'],
+      buzzwords: ['WWYLM'],
+      budget: 262150,
+      contributorCount: 70,
+      targeting: { gender: 'ALL' },
+    } as any;
+
+    beforeEach(() => {
+      prisma.user.findUnique.mockResolvedValue(creator);
+    });
+
+    it('keeps resourceLink on a MAKE_POST task', async () => {
+      await service.createTask('creator-1', dto);
+
+      expect(prisma.task.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            category: 'MAKE_POST',
+            resourceLink: 'https://tiktok.com/cccccxx',
+          }),
+        }),
+      );
+    });
+
+    it('stores the payout pool separately from the funded budget', async () => {
+      await service.createTask('creator-1', dto);
+
+      const data = prisma.task.create.mock.calls[0][0].data;
+      expect(data.budget).toBe(262150);
+      expect(data.payoutPool).toBe(245000);
+      expect(data.platformFeePercentage).toBe(7);
+      expect(data.contributorSlots).toBe(70);
+    });
+
+    it('calculates the budget itself when the client omits it', async () => {
+      const { budget, ...withoutBudget } = dto;
+
+      await service.createTask('creator-1', withoutBudget);
+
+      const data = prisma.task.create.mock.calls[0][0].data;
+      expect(data.budget).toBe(262150);
+      expect(data.payoutPool).toBe(245000);
+      expect(data.contributorSlots).toBe(70);
+    });
+
+    it('stores its own figure rather than a budget inside the rounding tolerance', async () => {
+      await service.createTask('creator-1', { ...dto, budget: 262149 });
+
+      // Accepted (within +/-1), but the charged amount must be the server's.
+      expect(prisma.task.create.mock.calls[0][0].data.budget).toBe(262150);
+    });
+
+    it('rejects a budget that omits the platform fee', async () => {
+      // 245,000 is the payout pool — what the client was sending before the
+      // fee moved to the creator.
+      await expect(
+        service.createTask('creator-1', { ...dto, budget: 245000 }),
+      ).rejects.toThrow(/262150/);
+    });
+
+    it('nulls resourceLink only when the creator omits it', async () => {
+      const { resourceLink, ...withoutLink } = dto;
+      await service.createTask('creator-1', withoutLink);
+
+      expect(prisma.task.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ resourceLink: null }),
+        }),
+      );
+    });
+  });
 });
 
 describe('TasksService new-task broadcast', () => {
@@ -364,4 +466,5 @@ describe('TasksService new-task broadcast', () => {
   function flushBroadcast() {
     return new Promise((resolve) => setImmediate(resolve));
   }
+
 });
